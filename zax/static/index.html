@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ZAX — AI CEO</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='none' stroke='%2319e3ff' stroke-width='6'/><circle cx='50' cy='50' r='16' fill='%2319e3ff'/></svg>" />
+<link rel="stylesheet" href="/static/style.css?v=6" />
+</head>
+<body>
+
+<!-- Boot splash: the user gesture here unlocks audio so Zax can speak the greeting -->
+<div id="boot">
+  <div class="boot-inner">
+    <div class="boot-ring"><div class="boot-core"></div></div>
+    <h1 class="boot-logo">Z A X</h1>
+    <p class="boot-sub">AI CHIEF EXECUTIVE OFFICER</p>
+    <button id="boot-btn">INITIALIZE</button>
+    <p class="boot-hint">voice systems require one click to come online</p>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <aside id="sidebar">
+    <div class="logo">ZAX<span class="logo-dot"></span></div>
+    <nav>
+      <button class="nav-btn active" data-panel="bridge">⌬ Bridge</button>
+      <button class="nav-btn" data-panel="org">⛬ Org Chart</button>
+      <button class="nav-btn" data-panel="skills">✦ Skills</button>
+      <button class="nav-btn" data-panel="tasks">☰ Tasks</button>
+      <button class="nav-btn" data-panel="ops">◈ Operations</button>
+      <button class="nav-btn" data-panel="cortex">⊚ Cortex</button>
+      <button class="nav-btn" data-panel="graph">⧉ Graph</button>
+      <button class="nav-btn" data-panel="settings">⚙ Settings</button>
+    </nav>
+
+    <!-- chat sessions: multiple conversations, like a normal AI chatbot -->
+    <div id="chat-sessions">
+      <button id="new-chat-btn">＋ New chat</button>
+      <div id="sessions-list"></div>
+    </div>
+
+    <div class="side-meta">
+      <div id="provider-badge" class="badge">core: …</div>
+      <div id="founder-badge" class="badge">founder: …</div>
+    </div>
+  </aside>
+
+  <main id="main">
+
+    <!-- ============ BRIDGE ============ -->
+    <section id="panel-bridge" class="panel active">
+      <div class="bridge-top">
+        <div id="orb"><div class="orb-core"></div><div class="orb-ring r1"></div><div class="orb-ring r2"></div></div>
+        <div class="bridge-status">
+          <div id="zax-state">ZAX · ONLINE</div>
+          <div id="ticker" class="ticker">—</div>
+        </div>
+        <div id="active-session-name" class="active-session"></div>
+        <button id="voice-toggle" title="Toggle whether Zax speaks replies aloud">🔇</button>
+      </div>
+      <div id="core-error-line" class="core-error hidden"></div>
+      <div id="chat-log">
+        <div id="typing-indicator" class="hidden">
+          <div class="typing-dot"></div>
+          <div class="typing-dot"></div>
+          <div class="typing-dot"></div>
+        </div>
+      </div>
+      <form id="chat-form">
+        <button type="button" id="mic-btn" title="Speak to Zax">🎙</button>
+        <input id="chat-input" autocomplete="off" placeholder="Speak to Zax, Founder… (e.g. “research the best NAS under $500”)" />
+        <button type="submit" id="send-btn">SEND</button>
+      </form>
+    </section>
+
+    <!-- ============ ORG ============ -->
+    <section id="panel-org" class="panel">
+      <div class="org-top">
+        <div class="org-node founder-node"><div class="node-title">FOUNDER</div><div class="node-name" id="org-founder">—</div></div>
+        <div class="org-line"></div>
+        <div class="org-node zax-node"><div class="node-title">CEO</div><div class="node-name">ZAX</div></div>
+      </div>
+      <div class="section-head">
+        <h2>STAFF</h2>
+        <form id="hire-form">
+          <input id="hire-role" placeholder="role to hire for (e.g. market research)" />
+          <button type="submit">+ HIRE</button>
+        </form>
+      </div>
+      <div id="agents-grid"></div>
+      <h2 class="dim-head">FORMER EMPLOYEES</h2>
+      <div id="fired-grid"></div>
+    </section>
+
+    <!-- ============ SKILLS ============ -->
+    <section id="panel-skills" class="panel">
+      <div class="section-head">
+        <h2>SKILL LIBRARY <span class="hint">(specialist packs Zax can hire — each is a domain expert with tuned prompts &amp; tools)</span></h2>
+      </div>
+      <div id="skills-catalog"></div>
+    </section>
+
+    <!-- ============ TASKS ============ -->
+    <section id="panel-tasks" class="panel">
+      <form id="task-form">
+        <input id="task-title" placeholder="task title" required />
+        <input id="task-desc" placeholder="details (optional)" />
+        <select id="task-priority">
+          <option value="1">P1 · high</option>
+          <option value="2" selected>P2 · normal</option>
+          <option value="3">P3 · low</option>
+        </select>
+        <button type="submit">+ FILE TASK</button>
+        <button type="button" id="run-now-btn" title="Assign, execute & review everything pending right now">▶ RUN NOW</button>
+      </form>
+      <div id="run-now-status" class="run-status hint"></div>
+      <div id="task-board"></div>
+    </section>
+
+    <!-- ============ OPS ============ -->
+    <section id="panel-ops" class="panel">
+      <div id="stat-cards" class="stat-row"></div>
+      <div class="ops-cols">
+        <div>
+          <h2>ROUTINES <span class="hint">(recurring work, Paperclip-style)</span></h2>
+          <form id="routine-form">
+            <input id="routine-name" placeholder="routine name" required />
+            <input id="routine-desc" placeholder="what should be done" />
+            <input id="routine-interval" type="number" min="5" value="1440" title="interval in minutes" />
+            <button type="submit">+ ADD</button>
+          </form>
+          <div id="routines-list"></div>
+        </div>
+        <div>
+          <h2>AUDIT LOG</h2>
+          <div id="audit-log"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ CORTEX (memory + self-learning) ============ -->
+    <section id="panel-cortex" class="panel">
+      <div id="cortex-stats" class="stat-row"></div>
+      <div class="section-head">
+        <h2>SELF-LEARNING <span class="hint">(Zax distills skills &amp; lessons from every review, and reflects daily)</span></h2>
+        <button id="reflect-btn">⟳ REFLECT NOW</button>
+      </div>
+      <div id="reflect-report" class="settings-block hidden"></div>
+      <h2>MEMORY BANK</h2>
+      <form id="mem-search-form">
+        <input id="mem-q" placeholder="search company memory…" />
+        <select id="mem-kind">
+          <option value="">all kinds</option>
+          <option value="skill">skills</option>
+          <option value="lesson">lessons</option>
+          <option value="report">daily reports</option>
+          <option value="note">notes</option>
+          <option value="org">org history</option>
+        </select>
+        <button type="submit">SEARCH</button>
+      </form>
+      <div id="cortex-list"></div>
+    </section>
+
+    <!-- ============ GRAPH (graphify memory graph) ============ -->
+    <section id="panel-graph" class="panel">
+      <div id="graph-stats" class="stat-row"></div>
+      <div class="section-head">
+        <h2>MEMORY GRAPH <span class="hint">(graphify engine — entities &amp; relationships mined from your chats, tasks &amp; memory; the model reads context from here instead of replaying history)</span></h2>
+        <button id="graph-rebuild">⟳ REBUILD</button>
+      </div>
+      <form id="graph-query-form">
+        <input id="graph-q" autocomplete="off" placeholder="ask the graph… e.g. “what connects to payments?”" />
+        <button type="submit">QUERY</button>
+      </form>
+      <div id="graph-query-result" class="settings-block hidden"></div>
+      <div id="graph-canvas-wrap">
+        <canvas id="graph-canvas"></canvas>
+        <div id="graph-legend"></div>
+        <div id="graph-inspector" class="hidden"></div>
+        <div id="graph-empty" class="graph-empty hidden">memory graph is empty — chat with Zax and it builds itself</div>
+      </div>
+    </section>
+
+    <!-- ============ SETTINGS ============ -->
+    <section id="panel-settings" class="panel">
+      <h2>SYSTEM</h2>
+      <div id="settings-info" class="settings-block"></div>
+      <h2>INTELLIGENCE CORE <span class="hint">(pick any provider — Zax and all agents run on it)</span></h2>
+      <div id="providers-list"></div>
+      <h2>VOICE <span class="hint">(off by default — Zax writes; speaks only when you ask)</span></h2>
+      <div class="settings-block">
+        <label class="row"><input type="checkbox" id="voice-enabled" /> Zax speaks every reply aloud (auto-voice)</label>
+        <p class="hint">With this off, Zax stays quiet — use the 🔊 on any message, the 🔇/🔊 toggle on the Bridge, or just talk to him with the mic and he'll reply aloud.</p>
+        <div class="row">
+          <label>Engine</label>
+          <select id="voice-provider">
+            <option value="edge">edge-tts (free)</option>
+            <option value="elevenlabs">ElevenLabs (premium, most human)</option>
+          </select>
+        </div>
+        <div class="row" id="voice-edge-row">
+          <label>Voice</label>
+          <select id="voice-edge-select"></select>
+        </div>
+        <div id="voice-eleven-rows" class="hidden">
+          <div class="row">
+            <input id="voice-eleven-key" type="password" placeholder="ElevenLabs API key" style="flex:1" />
+            <button id="voice-eleven-connect">CONNECT</button>
+          </div>
+          <div class="row">
+            <label>Voice</label>
+            <select id="voice-eleven-select"></select>
+          </div>
+          <p class="hint">Get a free key at elevenlabs.io → Profile → API key. Truly human, expressive voices.</p>
+        </div>
+        <button id="voice-test">▶ TEST VOICE</button>
+        <span id="voice-status" class="hint"></span>
+      </div>
+      <h2>TELEGRAM <span class="hint">(talk to Zax &amp; get alerts from your phone)</span></h2>
+      <div class="settings-block" id="telegram-block">
+        <div id="telegram-status" class="kv">checking…</div>
+        <p class="hint">1. In Telegram, message <b>@BotFather</b> → <code>/newbot</code> → copy the token.
+           2. Paste it below and connect. 3. Open your bot and send <code>/start</code>.</p>
+        <div class="row">
+          <input id="telegram-token" type="password" placeholder="bot token (123456:ABC-…)" style="flex:1" />
+          <button id="telegram-connect">CONNECT</button>
+        </div>
+        <label class="row"><input type="checkbox" id="telegram-notify" checked /> push task / hire / fire alerts</label>
+        <button id="telegram-disconnect" class="ghost-btn">disconnect</button>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script src="/static/app.js?v=6"></script>
+</body>
+</html>

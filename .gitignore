@@ -1,0 +1,16 @@
+.venv/
+data/
+.env
+__pycache__/
+*.pyc
+nohup.out
+
+# vendored graphify keeps its own large test corpus; we only need the package
+vendor/graphify/tests/
+vendor/graphify/worked/
+vendor/graphify/docs/
+vendor/graphify/tools/
+vendor/graphify/uv.lock
+vendor/graphify/CHANGELOG.md
+zax-stdout.log
+zax-stderr.log

@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/bin/python -m pytest)",
+      "Bash(.venv/bin/python -c \"import zax.ceo, zax.heartbeat, zax.graph, zax.learning, zax.agents, zax.llm, zax.db, zax.voice, zax.api, zax.pipeline, zax.skills, zax.telegram, zax.tools, zax.config, zax.main; print\\('ALL IMPORTS OK'\\)\")",
+      "Bash(.venv/bin/python -m py_compile zax/*.py tests/*.py)",
+      "Bash(timeout 12 .venv/bin/python -m zax)",
+      "Bash(curl -s http://127.0.0.1:8777/api/state)",
+      "Bash(wait)",
+      "Bash(pkill -f \"python -m zax\")",
+      "Bash(python3 -c \"print\\(__import__\\('sys'\\).version\\)\")",
+      "Bash(.venv/bin/ruff check *)",
+      "Bash(.venv/bin/python -m pytest tests/test_db.py -q)"
+    ]
+  }
+}
