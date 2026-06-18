@@ -1,5 +1,7 @@
 # ZAX — your AI CEO
 
+[![tests](https://github.com/bhupen5c/zax/actions/workflows/ci.yml/badge.svg)](https://github.com/bhupen5c/zax/actions/workflows/ci.yml)
+
 > You are the Founder. **Zax** is the CEO. Zax hires a staff of AI agents, assigns them
 > your day-to-day tasks, scores every deliverable, and **fires the ones who underperform**.
 > It greets you out loud in a deep voice when you boot it — JARVIS, but he runs your company.
@@ -15,12 +17,18 @@ Zax fuses three open-source ideas into one app:
 ## Quick start
 
 ```bash
+git clone https://github.com/bhupen5c/zax.git
 cd zax
-cp .env.example .env        # add ANTHROPIC_API_KEY or OPENAI_API_KEY for real intelligence
-./run.sh                    # creates venv, installs deps, boots Zax
+cp .env.example .env        # optional — keys can also be added live in Settings
+./run.sh                    # creates a venv, installs deps, boots Zax
 ```
 
-Open **http://127.0.0.1:8777**, press **INITIALIZE** — Zax welcomes you by voice.
+Open **http://127.0.0.1:8777**, press **INITIALIZE** — Zax welcomes you.
+
+No API key? Zax runs on a built-in **mock core** so the whole org machinery (hiring,
+firing, tasks, reviews) works as a demo. For real intelligence, pick any provider in
+**Settings → Intelligence Core** (Claude subscription via the `claude` CLI, or an API
+key for OpenAI / DeepSeek / OpenRouter / Groq / Gemini / …, or local Ollama).
 
 ## Intelligence core — runs on anything
 
@@ -142,5 +150,19 @@ get a shell on your machine unless you say so. File tools are jailed to `data/wo
 ## Testing
 
 ```bash
-./scripts/smoke_test.sh    # 37 checks: every endpoint + security hardening
+./run.sh                              # one-time, to create the venv + install deps
+.venv/bin/python -m pytest            # 97 unit tests across every module
+./scripts/smoke_test.sh               # 58 live API + security-hardening checks (server running)
 ```
+
+The unit suite runs against a fresh temp DB and the mock provider — no keys or network
+needed. GitHub Actions runs it on every push (see `.github/workflows/ci.yml`).
+
+## License
+
+Zax is licensed under the **GNU AGPL-3.0** (see [`LICENSE`](LICENSE)). It vendors
+[graphify](https://github.com/safishamsi/graphify) (AGPL-3.0) under `vendor/graphify` and
+draws on [paperclip](https://github.com/paperclipai/paperclip) and
+[odysseus](https://github.com/pewdiepie-archdaemon/odysseus) (both AGPL-3.0); the copyleft
+license carries through. If you run a modified version as a network service, the AGPL
+requires you to offer users its source.
