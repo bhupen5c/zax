@@ -538,7 +538,6 @@ button:disabled {
   padding: 12px 16px;
   font-size: 13px;
   line-height: 1.6;
-  white-space: pre-wrap;
   word-wrap: break-word;
   border-radius: var(--radius);
   animation: msgIn 0.2s ease-out;
@@ -571,6 +570,64 @@ button:disabled {
   text-transform: uppercase;
 }
 .msg.zax .who { color: var(--cyan-dim); }
+
+.msg-meta { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+.msg-time { font-size: 9px; color: var(--dim); opacity: 0.7; letter-spacing: 1px; }
+.msg-body { display: block; }
+.msg-body > p { margin: 0 0 0.6em; }
+.msg-body > p:last-child { margin-bottom: 0; }
+.msg-body h1, .msg-body h2, .msg-body h3, .msg-body h4 {
+  color: var(--cyan);
+  font-size: 13px;
+  letter-spacing: 2px;
+  margin: 12px 0 8px;
+  text-transform: uppercase;
+}
+.msg-body h1 { font-size: 14px; }
+.msg-body h2 { font-size: 13px; }
+.msg-body h3, .msg-body h4 { font-size: 12px; }
+.msg-body strong { color: #fff; font-weight: 600; }
+.msg-body em { color: var(--cyan); font-style: italic; }
+.msg-body del { opacity: 0.6; text-decoration: line-through; }
+.msg-body a { color: var(--cyan); text-decoration: underline; text-underline-offset: 2px; }
+.msg-body a:hover { color: #6ee7ff; }
+.msg-body ul, .msg-body ol { margin: 8px 0 8px 18px; padding: 0; }
+.msg-body li { margin: 3px 0; }
+.msg-body blockquote {
+  border-left: 2px solid var(--cyan-dim);
+  margin: 8px 0;
+  padding: 4px 12px;
+  color: var(--dim);
+  background: rgba(25, 227, 255, 0.03);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.msg-body code {
+  background: rgba(25, 227, 255, 0.08);
+  color: var(--cyan);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.msg-body pre.code-block {
+  background: rgba(4, 7, 13, 0.7);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  margin: 10px 0;
+  overflow-x: auto;
+}
+.msg-body pre.code-block code {
+  background: transparent;
+  color: var(--text);
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.hl-kw { color: #ff7edb; }
+.hl-str { color: #3dff9e; }
+.hl-num { color: #ffb938; }
+.hl-comm { color: var(--dim); font-style: italic; }
 
 #chat-form {
   display: flex;

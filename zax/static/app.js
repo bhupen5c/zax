@@ -23,6 +23,100 @@ const api = {
   },
 };
 
+function esc(raw) {
+  return raw
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/* ============================== markdown + code highlighting */
+
+function highlightCode(code, lang) {
+  const keywords = {
+    python: /\b(def|class|if|elif|else|for|while|return|import|from|as|try|except|finally|with|yield|lambda|async|await|raise|pass|break|continue|and|or|not|in|is|None|True|False|self|print)\b/g,
+    javascript: /\b(const|let|var|function|return|if|else|for|while|class|import|export|from|async|await|try|catch|finally|throw|new|this|true|false|null|undefined)\b/g,
+    typescript: /\b(const|let|var|function|return|if|else|for|while|class|interface|type|import|export|from|async|await|try|catch|finally|throw|new|this|true|false|null|undefined)\b/g,
+    json: /".*?":|true|false|null|\b\d+\b/g,
+    html: /&lt;\/?[\w-]+|&lt;![\w\s]*&gt;/g,
+    css: /[.#][\w-]+\s*\{|\b(display|color|background|margin|padding|border|width|height|font|position|flex|grid|content|var)\b/g,
+    bash: /\b(echo|cd|ls|cat|grep|sed|awk|curl|python|node|npm|git|docker|sudo|export|source|if|then|else|fi|for|do|done)\b/g,
+  };
+  const k = lang && keywords[lang.toLowerCase()] ? lang.toLowerCase() : "javascript";
+  const pat = keywords[k] || keywords.javascript;
+  const comm = k === "python" ? /#.*/g : k === "html" ? /&lt;!--.*?--&gt;/g : /(\/\/.*|\/\*[\s\S]*?\*\/)/g;
+  const str = /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`)/g;
+  const num = /\b\d+(?:\.\d+)?\b/g;
+  let out = esc(code);
+  const spans = [];
+  function mark(re, cls) {
+    out = out.replace(re, (m) => { spans.push([m, cls]); return `\x00_SPAN_${spans.length - 1}_\x00`; });
+  }
+  mark(str, "hl-str");
+  mark(comm, "hl-comm");
+  mark(pat, "hl-kw");
+  mark(num, "hl-num");
+  out = out.replace(/\x00_SPAN_(\d+)_\x00/g, (_, i) => {
+    const [text, cls] = spans[+i];
+    return `<span class="${cls}">${esc(text)}</span>`;
+  });
+  return out;
+}
+
+function renderInline(text) {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/__([^_]+)__/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    .replace(/_([^_]+)_/g, "<em>$1</em>")
+    .replace(/~~([^~]+)~~/g, "<del>$1</del>")
+    .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+}
+
+function renderMarkdown(text) {
+  // fenced code blocks (handle first, globally)
+  const codeBlocks = [];
+  text = text.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    codeBlocks.push(`<pre class="code-block"><code>${highlightCode(code.replace(/\n$/, ""), lang)}</code></pre>`);
+    return `\x00CODE${codeBlocks.length - 1}\x00`;
+  });
+
+  const blocks = text.split(/\n\n+/);
+  const html = blocks.map((block) => {
+    block = block.trim();
+    if (!block) return "";
+    // code placeholder
+    if (/^\x00CODE\d+\x00$/.test(block)) {
+      return codeBlocks[+block.slice(5, -1)];
+    }
+    // headers
+    const h = block.match(/^(#{1,4})\s+(.*)$/);
+    if (h) return `<h${h[1].length}>${renderInline(esc(h[2]))}</h${h[1].length}>`;
+    // blockquote
+    if (/^>\s?/.test(block)) {
+      return `<blockquote>${renderInline(esc(block.replace(/^>\s?/gm, "")))}</blockquote>`;
+    }
+    // unordered list
+    if (/^[\-*]\s+/.test(block)) {
+      const items = block.split("\n").filter((l) => l.trim()).map((l) => `<li>${renderInline(esc(l.replace(/^[\-*]\s+/, "")))}</li>`).join("");
+      return `<ul>${items}</ul>`;
+    }
+    // ordered list
+    if (/^\d+\.\s+/.test(block)) {
+      const items = block.split("\n").filter((l) => l.trim()).map((l) => `<li>${renderInline(esc(l.replace(/^\d+\.\s+/, "")))}</li>`).join("");
+      return `<ol>${items}</ol>`;
+    }
+    // paragraph (preserve single line breaks)
+    const inner = esc(block).replace(/\n/g, "<br>");
+    return `<p>${renderInline(inner)}</p>`;
+  });
+
+  return html.join("");
+}
+
 /* ============================== voice: the Zax deep voice */
 
 const ZaxVoice = {
@@ -152,15 +246,22 @@ function setupMic() {
 
 /* ============================== bridge chat */
 
-function addMsg(role, content) {
+function addMsg(role, content, ts) {
   const div = document.createElement("div");
   div.className = `msg ${role}`;
   const who = document.createElement("span");
   who.className = "who";
   who.textContent = role === "zax" ? "ZAX · CEO" : "FOUNDER";
+  const time = document.createElement("span");
+  time.className = "msg-time";
+  time.textContent = ts ? new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
   const body = document.createElement("span");
-  body.textContent = content;
-  div.append(who, body);
+  body.className = "msg-body";
+  body.innerHTML = renderMarkdown(content);
+  const meta = document.createElement("div");
+  meta.className = "msg-meta";
+  meta.append(who, time);
+  div.append(meta, body);
   // Per-message speaker — play THIS reply aloud on demand (works even with
   // auto-voice off). This is the "speak only when asked" path.
   if (role === "zax") {
@@ -346,7 +447,7 @@ async function loadHistory(session = activeSession) {
   const ti = $("#typing-indicator");
   log.innerHTML = "";
   if (ti) log.appendChild(ti);  // re-add typing indicator
-  msgs.forEach((m) => addMsg(m.role, m.content));
+  msgs.forEach((m) => addMsg(m.role, m.content, m.ts));
   if (!msgs.length) {
     const hint = document.createElement("div");
     hint.className = "chat-empty";
