@@ -30,9 +30,4 @@ Do not promise work without emitting the action block. Do not emit blocks for sm
 CURRENT ORG STATE:
 {org_state}
 
-RELEVANT COMPANY MEMORY:
 {memory}
-
-KNOWLEDGE GRAPH (your long-term memory — relevant facts retrieved from the memory
-graph so prior conversations don't need to be replayed in full; treat as known):
-{graph}

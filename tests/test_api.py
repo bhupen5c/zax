@@ -143,3 +143,25 @@ def test_non_json_post_blocked(client):
 def test_bad_host_blocked(client):
     r = client.get("/api/status", headers={"Host": "evil.example.com"})
     assert r.status_code == 400
+
+
+# ---------------------------------------------------------------- deploy: health + auth
+
+def test_healthz_open(client):
+    assert client.get("/healthz").json() == {"ok": True}
+
+
+def test_access_password_gate(fresh_db, monkeypatch):
+    import base64
+
+    from zax import config as cfg, heartbeat as hb, main as m, telegram as tg
+    monkeypatch.setattr(cfg, "ACCESS_PASSWORD", "s3cret")
+    monkeypatch.setattr(hb, "start", lambda: None)
+    monkeypatch.setattr(tg, "start", lambda: None)
+    with TestClient(m.app, base_url="http://localhost") as c:
+        assert c.get("/api/status").status_code == 401          # no creds
+        assert c.get("/healthz").status_code == 200             # health stays open
+        good = base64.b64encode(b"founder:s3cret").decode()
+        assert c.get("/api/status", headers={"Authorization": f"Basic {good}"}).status_code == 200
+        bad = base64.b64encode(b"founder:wrong").decode()
+        assert c.get("/api/status", headers={"Authorization": f"Basic {bad}"}).status_code == 401

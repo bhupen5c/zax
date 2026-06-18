@@ -9,7 +9,7 @@ import random
 import time
 from pathlib import Path
 
-from . import config, db, graph, learning, llm, skills
+from . import config, db, graph, learning, llm, memory, skills
 
 PROMPTS = Path(__file__).parent / "prompts"
 CODENAMES = ["Orion", "Quark", "Rune", "Helix", "Onyx", "Drift", "Ember", "Zephyr",
@@ -88,21 +88,19 @@ async def chat(founder_message: str, session_id: str = "main") -> dict:
     if sess and sess["title"] in ("New chat", "") and db.recent_messages(2, session_id):
         title = founder_message.strip().split("\n")[0][:48] or "New chat"
         db.rename_session(session_id, title)
-    memory_hits = db.recall(founder_message, limit=4)
-    memory_text = "\n".join(f"- [{m['kind']}] {m['content']}" for m in memory_hits) or "(none)"
-
-    # Knowledge-graph recall: pull only the relevant subgraph instead of replaying
-    # the whole transcript. When the graph carries the context, we send a shorter
-    # raw history — fewer tokens, longer effective memory.
-    graph_block = graph.context_block(founder_message, token_budget=600)
+    # Graph-mediated recall: one block routed through the knowledge graph (relevant
+    # subgraph + the exact provenance-linked facts) instead of two overlapping dumps.
+    # The better the graph covers the question, the less raw history we replay —
+    # fewer tokens, longer effective memory.
+    mem = memory.recall_context(founder_message, token_budget=600)
+    memory_block = mem["block"] or "RELEVANT MEMORY: (the memory graph is still learning — keep chatting)"
     system = (
         _prompt("zax_system.txt")
         .replace("{founder}", config.FOUNDER_NAME)
         .replace("{org_state}", json.dumps(org_state(), indent=1))
-        .replace("{memory}", memory_text)
-        .replace("{graph}", graph_block or "(graph is still learning — keep chatting)")
+        .replace("{memory}", memory_block)
     )
-    raw_turns = 6 if graph_block else 16
+    raw_turns = memory.raw_turns_for(mem["coverage"])
     history = [
         {"role": "user" if m["role"] == "founder" else "assistant", "content": m["content"]}
         for m in db.recent_messages(raw_turns, session_id)
@@ -118,17 +116,18 @@ async def chat(founder_message: str, session_id: str = "main") -> dict:
         tokens = 0
 
     reply, actions = _execute_actions(text)
-    db.add_message("zax", reply, session_id)
-    saved = "" if not graph_block else " · graph recall replaced full history"
+    msg_id = db.add_message("zax", reply, session_id)
+    saved = (f" · graph mediated {mem['n_facts']} fact(s) across {mem['n_nodes']} node(s), "
+             f"replaced full history") if mem["coverage"] != "none" else ""
     db.log_event("chat", "zax", f"Zax replied to the Founder ({tokens} tokens{saved})")
-    # Distil this turn into the memory graph without blocking the response.
-    graph.schedule_exchange(founder_message, reply)
+    # Distil this turn into the memory graph (provenance-linked) without blocking.
+    graph.schedule_exchange(founder_message, reply, str(msg_id or ""))
     # Anything Zax just set in motion (a task, a hire, a firing) executes now —
     # not on the next heartbeat. Fire-and-forget so the reply returns instantly.
     if actions:
         from . import pipeline
         pipeline.kick("chat delegation")
-    return {"reply": reply, "actions": actions, "graph_context_used": bool(graph_block)}
+    return {"reply": reply, "actions": actions, "graph_context_used": mem["coverage"] != "none"}
 
 
 def _execute_actions(text: str) -> tuple[str, list[dict]]:

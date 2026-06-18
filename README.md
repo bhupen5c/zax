@@ -158,6 +158,33 @@ get a shell on your machine unless you say so. File tools are jailed to `data/wo
 The unit suite runs against a fresh temp DB and the mock provider — no keys or network
 needed. GitHub Actions runs it on every push (see `.github/workflows/ci.yml`).
 
+## Deploy (Railway / Render / Fly)
+
+Zax is a **stateful, always-on server** (SQLite state + background loops), so it needs a
+host that runs a persistent container with a small disk — **not** a serverless platform
+like Vercel (there, state resets and delegated tasks never execute). A `Dockerfile` is
+included; it reads the host's `$PORT`, binds `0.0.0.0`, and keeps all state in `/data`.
+
+**Railway (recommended):**
+1. New Project → **Deploy from GitHub repo** → pick `bhupen5c/zax` (Railway uses the Dockerfile).
+2. Add a **Volume** mounted at **`/data`** (this persists `zax.db` across deploys).
+3. **Variables:**
+   - `ZAX_DATA_DIR=/data`
+   - `ZAX_ACCESS_PASSWORD=<a strong password>` — **required**; gates the public URL behind
+     HTTP Basic auth (username can be anything) so strangers can't drive your org or spend
+     your tokens.
+   - a provider key, e.g. `DEEPSEEK_API_KEY=...` (or `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, …) —
+     or leave it out and add the key in **Settings → Intelligence Core** after first boot.
+   - optional: `ZAX_FOUNDER_NAME=...`
+4. Deploy. Health check is `/healthz`. Open the generated URL, sign in with your password,
+   press **INITIALIZE**.
+
+`ZAX_HOST=0.0.0.0` and `/data` are already set by the Dockerfile. Render and Fly.io work the
+same way (Docker + a persistent disk/volume at `/data`).
+
+> The `claude-cli` subscription provider only works where the `claude` CLI is logged in
+> (your Mac) — in the cloud use an API-key provider (DeepSeek, OpenAI, OpenRouter, …) or Ollama.
+
 ## License
 
 Zax is licensed under the **GNU AGPL-3.0** (see [`LICENSE`](LICENSE)). It vendors

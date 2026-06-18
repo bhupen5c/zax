@@ -1,9 +1,11 @@
 """Zax — AI CEO & agent orchestration. FastAPI app entrypoint."""
+import base64
+import hmac
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -72,6 +74,25 @@ async def require_json_posts(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def access_password(request: Request, call_next):
+    """Gate the whole app behind HTTP Basic when ZAX_ACCESS_PASSWORD is set —
+    required for a public deploy. /healthz stays open for platform health checks."""
+    if config.ACCESS_PASSWORD and request.url.path != "/healthz":
+        hdr = request.headers.get("authorization", "")
+        ok = False
+        if hdr.startswith("Basic "):
+            try:
+                pw = base64.b64decode(hdr[6:]).decode("utf-8", "replace").split(":", 1)[1]
+                ok = hmac.compare_digest(pw, config.ACCESS_PASSWORD)
+            except Exception:
+                ok = False
+        if not ok:
+            return Response("Authentication required", status_code=401,
+                            headers={"WWW-Authenticate": 'Basic realm="Zax"'})
+    return await call_next(request)
+
+
 app.include_router(api.router)
 app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 
@@ -79,3 +100,8 @@ app.mount("/static", StaticFiles(directory=str(STATIC)), name="static")
 @app.get("/")
 async def index():
     return FileResponse(str(STATIC / "index.html"))
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True}

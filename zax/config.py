@@ -16,7 +16,11 @@ DB_PATH = DATA_DIR / "zax.db"
 
 FOUNDER_NAME = os.environ.get("ZAX_FOUNDER_NAME", "Bhupen")
 HOST = os.environ.get("ZAX_HOST", "127.0.0.1")
-PORT = int(os.environ.get("ZAX_PORT", "8777"))
+# Cloud hosts (Railway/Render/Fly) inject $PORT; honour it, else ZAX_PORT, else 8777.
+PORT = int(os.environ.get("PORT") or os.environ.get("ZAX_PORT") or "8777")
+# When set, the whole app is gated behind HTTP Basic auth (any username + this
+# password). REQUIRED for a public deploy so strangers can't drive your org.
+ACCESS_PASSWORD = os.environ.get("ZAX_ACCESS_PASSWORD", "")
 
 # LLM provider. "auto" prefers the Claude subscription (terminal login) when the
 # `claude` CLI is installed, then falls through to any configured API key.

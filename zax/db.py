@@ -111,6 +111,20 @@ CREATE TABLE IF NOT EXISTS graph_edges (
     PRIMARY KEY (src, tgt, relation)
 );
 
+-- Provenance: links a graph node back to the exact source rows it was distilled
+-- from. This is what lets the graph act as a MEDIATOR — a node surfaced by
+-- retrieval can fetch the precise underlying fact (a memory/task) instead of the
+-- model re-deriving it from replayed history.
+CREATE TABLE IF NOT EXISTS graph_provenance (
+    node_id  TEXT NOT NULL,
+    ref_kind TEXT NOT NULL,   -- 'memory' | 'task' | 'message'
+    ref_id   TEXT NOT NULL,
+    weight   REAL NOT NULL DEFAULT 1.0,
+    created  REAL NOT NULL,
+    PRIMARY KEY (node_id, ref_kind, ref_id)
+);
+CREATE INDEX IF NOT EXISTS idx_provenance_node ON graph_provenance(node_id);
+
 CREATE TABLE IF NOT EXISTS memories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     content TEXT NOT NULL,
@@ -402,10 +416,15 @@ def touch_session(session_id: str) -> None:
 
 # ---------------------------------------------------------------- chat
 
-def add_message(role: str, content: str, session_id: str = "main") -> None:
-    execute("INSERT INTO messages (ts, role, content, session_id) VALUES (?,?,?,?)",
-            (time.time(), role, content, session_id))
+def add_message(role: str, content: str, session_id: str = "main") -> int:
+    with _lock:
+        conn = connect()
+        cur = conn.execute("INSERT INTO messages (ts, role, content, session_id) VALUES (?,?,?,?)",
+                           (time.time(), role, content, session_id))
+        conn.commit()
+        mid = int(cur.lastrowid)
     touch_session(session_id)
+    return mid
 
 
 def recent_messages(limit: int = 20, session_id: str = "main") -> list[dict]:
@@ -418,20 +437,25 @@ def recent_messages(limit: int = 20, session_id: str = "main") -> list[dict]:
 # Persistent, Odysseus-style: typed memories with importance and usage tracking,
 # recalled by hybrid scoring (FTS5 keyword rank × importance × recency).
 
-def remember(content: str, kind: str = "note", agent: str = "", importance: float = 1.0) -> None:
+def remember(content: str, kind: str = "note", agent: str = "", importance: float = 1.0) -> int:
+    """Store a memory and return its id (existing id if reinforced, 0 if empty)."""
     content = content.strip()
     if not content:
-        return
+        return 0
     dup = query("SELECT id, importance FROM memories WHERE content = ? LIMIT 1", (content,))
     if dup:  # reinforced, not duplicated
         execute("UPDATE memories SET importance = importance + 0.5, last_used = ? WHERE id = ?",
                 (time.time(), dup[0]["id"]))
-        return
+        return dup[0]["id"]
     now = time.time()
-    execute(
-        "INSERT INTO memories (content, kind, agent, importance, created, last_used) VALUES (?,?,?,?,?,?)",
-        (content, kind, agent, importance, now, now),
-    )
+    with _lock:
+        conn = connect()
+        cur = conn.execute(
+            "INSERT INTO memories (content, kind, agent, importance, created, last_used) VALUES (?,?,?,?,?,?)",
+            (content, kind, agent, importance, now, now),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
 
 
 def recall(text: str, limit: int = 3, kinds: Optional[list[str]] = None,
@@ -572,8 +596,54 @@ def graph_edge_count() -> int:
 def delete_node(node_id: str) -> None:
     execute("DELETE FROM graph_nodes WHERE id=?", (node_id,))
     execute("DELETE FROM graph_edges WHERE src=? OR tgt=?", (node_id, node_id))
+    execute("DELETE FROM graph_provenance WHERE node_id=?", (node_id,))
 
 
 def clear_graph() -> None:
     execute("DELETE FROM graph_nodes")
     execute("DELETE FROM graph_edges")
+    execute("DELETE FROM graph_provenance")
+
+
+# ---------------------------------------------------------------- provenance (graph ↔ source)
+
+def link_provenance(node_id: str, ref_kind: str, ref_id: str) -> None:
+    """Record that `node_id` was distilled from a source row (memory/task/message)."""
+    execute(
+        "INSERT INTO graph_provenance (node_id, ref_kind, ref_id, created) VALUES (?,?,?,?)"
+        " ON CONFLICT(node_id, ref_kind, ref_id) DO UPDATE SET weight = weight + 1.0",
+        (node_id, ref_kind, str(ref_id), time.time()),
+    )
+
+
+def memory_ids_for_nodes(node_ids: list[str], limit: int = 12) -> list[int]:
+    """Memory ids linked to any of these graph nodes, most-linked first.
+
+    This is the mediator's core lookup: given the relevant subgraph, fetch the
+    exact memories those nodes point back to."""
+    if not node_ids:
+        return []
+    ph = ",".join("?" * len(node_ids))
+    rows = query(
+        f"SELECT ref_id, SUM(weight) AS w FROM graph_provenance"
+        f" WHERE ref_kind='memory' AND node_id IN ({ph})"
+        f" GROUP BY ref_id ORDER BY w DESC LIMIT ?",
+        (*node_ids, limit),
+    )
+    out = []
+    for r in rows:
+        try:
+            out.append(int(r["ref_id"]))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def memories_by_ids(ids: list[int]) -> list[dict]:
+    """Fetch memory rows by id, preserving the order of `ids`."""
+    if not ids:
+        return []
+    ph = ",".join("?" * len(ids))
+    rows = query(f"SELECT * FROM memories WHERE id IN ({ph})", tuple(ids))
+    by_id = {r["id"]: r for r in rows}
+    return [by_id[i] for i in ids if i in by_id]

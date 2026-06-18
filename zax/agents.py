@@ -3,7 +3,7 @@ tool loop (search, fetch, files, memory) and returns a deliverable for Zax to re
 import json
 import re
 
-from . import config, db, graph, learning, llm, tools
+from . import config, db, llm, memory, tools
 
 
 def _deliverable(text: str) -> str:
@@ -28,15 +28,18 @@ async def execute_task(agent: dict, task: dict) -> None:
     db.update_task(task["id"], status="in_progress", progress=15)
     db.log_event("work", agent["name"], f"{agent['name']} started “{task['title']}”")
 
-    memory_block = learning.context_for(agent, task)
-    graph_block = graph.context_block(f"{task['title']} {task['description']}", token_budget=500)
+    # Graph-mediated memory: one block (relevant subgraph + provenance-linked facts,
+    # scoped to this agent) replaces the old separate learning + graph dumps.
+    mem = memory.recall_context(
+        f"{task['title']} {task['description']} {agent['role']}",
+        token_budget=500, agent=agent["name"],
+    )
     system = (
         f"{agent['persona']}\n\n"
         f"You are {agent['name']}, {agent['title']} at {config.FOUNDER_NAME}'s organization, "
         f"reporting to Zax (the AI CEO). Complete the assigned task to a high standard — "
         f"Zax will score your work and your job depends on it."
-        + (f"\n\n{memory_block}" if memory_block else "")
-        + (f"\n\nKNOWLEDGE GRAPH (relevant context, no need to ask):\n{graph_block}" if graph_block else "")
+        + (f"\n\n{mem['block']}" if mem["block"] else "")
         + f"\n\n{tools.TOOL_SPECS}"
     )
     messages = [{

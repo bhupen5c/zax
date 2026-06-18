@@ -13,7 +13,7 @@ back into agent prompts by context_for(), closing the loop.
 import time
 from pathlib import Path
 
-from . import db, llm
+from . import db, graph, llm, memory
 
 PROMPTS = Path(__file__).parent / "prompts"
 
@@ -28,22 +28,19 @@ def _prompt(name: str) -> str:
 # ---------------------------------------------------------------- injection
 
 def context_for(agent: dict, task: dict) -> str:
-    """Memory block injected into an agent's system prompt before it works."""
+    """Memory block injected into an agent's system prompt before it works.
+
+    Thin wrapper over the graph mediator (scoped to this agent), kept for callers
+    that only need the rendered block."""
     probe = f"{task['title']} {task['description']} {agent['role']}"
-    hits = db.recall(probe, limit=4, kinds=["skill", "lesson", "note", "org"],
-                     agent=agent["name"])
-    coaching = db.recall(agent["name"], limit=2, kinds=["lesson", "skill"],
-                         agent=agent["name"])
-    seen, lines = set(), []
-    for m in hits + coaching:
-        if m["id"] in seen:
-            continue
-        seen.add(m["id"])
-        lines.append(f"- [{m['kind']}] {m['content']}")
-    if not lines:
-        return ""
-    return ("LEARNED EXPERIENCE & COMPANY MEMORY (apply where relevant — "
-            "this is how we avoid repeating mistakes):\n" + "\n".join(lines[:6]))
+    return memory.recall_context(probe, token_budget=500, agent=agent["name"])["block"]
+
+
+def _remember(content: str, *, kind: str, agent: str = "", importance: float = 1.0) -> None:
+    """Store a memory AND index it into the graph (provenance-linked) so the mediator
+    can route to it immediately — institutional knowledge enters the graph live."""
+    mem_id = db.remember(content, kind=kind, agent=agent, importance=importance)
+    graph.schedule_memory(mem_id, content, kind)
 
 
 # ---------------------------------------------------------------- per-review
@@ -64,8 +61,8 @@ async def learn_from_review(task: dict, agent: dict, score: int, feedback: str) 
     content = str(parsed.get("text", "")).strip()
     if not content or len(content) < 15:
         return
-    db.remember(content, kind=kind, agent=agent["name"],
-                importance=2.0 if kind == "lesson" else 1.5)
+    _remember(content, kind=kind, agent=agent["name"],
+              importance=2.0 if kind == "lesson" else 1.5)
     db.log_event("learn", "zax", f"Zax recorded a {kind} from “{task['title']}”: {content[:90]}")
 
 
@@ -125,14 +122,14 @@ async def daily_reflection(force: bool = False) -> dict:
     coaching = parsed.get("coaching") or {}
 
     if report:
-        db.remember(f"[{time.strftime('%Y-%m-%d')}] {report}", kind="report", importance=1.2)
+        _remember(f"[{time.strftime('%Y-%m-%d')}] {report}", kind="report", importance=1.2)
     for lesson in lessons[:3]:
-        db.remember(lesson, kind="lesson", importance=2.0)
+        _remember(lesson, kind="lesson", importance=2.0)
     valid_names = {a["name"] for a in db.active_agents()}
     for name, note in list(coaching.items())[:5]:
         if str(name) in valid_names and str(note).strip():
-            db.remember(f"Coaching for {name}: {str(note).strip()}", kind="lesson",
-                        agent=str(name), importance=2.0)
+            _remember(f"Coaching for {name}: {str(note).strip()}", kind="lesson",
+                      agent=str(name), importance=2.0)
 
     db.set_setting("learning.last_reflection_day", time.strftime("%Y-%m-%d"))
     db.set_setting("learning.last_reflection_ts", str(time.time()))

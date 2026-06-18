@@ -158,6 +158,23 @@ def context_block(question: str, token_budget: int = 600) -> str:
     return gserve._subgraph_to_text(G, nodes, edges, token_budget=token_budget, seeds=seeds)
 
 
+def retrieve(question: str, token_budget: int = 500, depth: int = 2) -> dict:
+    """Mediator primitive: the relevant subgraph as both rendered text AND its node
+    ids/labels, so the caller can route from those nodes to their source memories.
+
+    Returns {text, node_ids, labels, seeds} — empty lists/'' when nothing matches."""
+    empty = {"text": "", "node_ids": [], "labels": [], "seeds": []}
+    if not AVAILABLE or db.graph_node_count() == 0:
+        return empty
+    G = materialize()
+    seeds, nodes, edges = _seed_subgraph(G, question, depth=depth)
+    if not nodes:
+        return empty
+    text = gserve._subgraph_to_text(G, nodes, edges, token_budget=token_budget, seeds=seeds)
+    labels = [G.nodes[n].get("label", n) for n in nodes if G.has_node(n)]
+    return {"text": text, "node_ids": list(nodes), "labels": labels, "seeds": list(seeds)}
+
+
 def query(question: str, token_budget: int = 1200) -> dict:
     """Answer 'what connects X to Y?' style questions from the graph (Graph tab)."""
     if not AVAILABLE:
@@ -216,10 +233,12 @@ def explain(node: str) -> dict:
 
 # ---------------------------------------------------------------- extraction
 
-def _persist(nodes: list[dict], edges: list[dict], source: str) -> int:
-    """Write extracted entities/relationships into the graph store. Returns node count."""
+def _persist(nodes: list[dict], edges: list[dict], source: str) -> list[str]:
+    """Write extracted entities/relationships into the graph store.
+
+    Returns the list of node ids touched (so the caller can link provenance)."""
     label_to_id: dict[str, str] = {}
-    written = 0
+    touched: list[str] = []
     for n in nodes:
         label = str(n.get("name") or n.get("label") or "").strip()[:80]
         if not label or label.lower() in STOP:
@@ -229,7 +248,7 @@ def _persist(nodes: list[dict], edges: list[dict], source: str) -> int:
         nid = _slug(label)
         label_to_id[label.lower()] = nid
         db.upsert_node(nid, label, kind, str(n.get("summary") or "")[:240], source)
-        written += 1
+        touched.append(nid)
     for e in edges:
         s = str(e.get("source") or "").strip().lower()
         t = str(e.get("target") or "").strip().lower()
@@ -240,11 +259,13 @@ def _persist(nodes: list[dict], edges: list[dict], source: str) -> int:
         # ensure endpoints exist even if only named inside a relationship
         if s not in label_to_id and s not in STOP:
             db.upsert_node(sid, str(e.get("source")).strip()[:80], "concept", "", source)
+            touched.append(sid)
         if t not in label_to_id and t not in STOP:
             db.upsert_node(tid, str(e.get("target")).strip()[:80], "concept", "", source)
+            touched.append(tid)
         db.upsert_edge(sid, tid, str(e.get("relation") or "related to")[:60],
                        str(e.get("confidence") or "EXTRACTED").upper(), source)
-    return written
+    return list(dict.fromkeys(touched))
 
 
 def _fallback_extract(text: str) -> tuple[list[dict], list[dict]]:
@@ -297,18 +318,27 @@ except Exception:
     _EXTRACT_PROMPT, PROMPTS_OK = "", False
 
 
-async def ingest_text(text: str, source: str) -> int:
+async def ingest_text(text: str, source: str, ref: tuple[str, str] | None = None) -> int:
+    """Distil `text` into the graph. When `ref=(ref_kind, ref_id)` is given, every
+    node touched is provenance-linked to that source row, so the graph can later
+    route retrieval straight back to the exact memory/task. Returns node count."""
     if not AVAILABLE or not text or not text.strip():
         return 0
     use_llm = llm.resolve_provider() != "mock"
     nodes, edges = await _llm_extract(text) if use_llm else _fallback_extract(text)
-    return _persist(nodes, edges, source)
+    touched = _persist(nodes, edges, source)
+    if ref and touched:
+        ref_kind, ref_id = ref
+        for nid in touched:
+            db.link_provenance(nid, ref_kind, str(ref_id))
+    return len(touched)
 
 
-async def ingest_exchange(founder_msg: str, zax_reply: str) -> None:
+async def ingest_exchange(founder_msg: str, zax_reply: str, message_id: str = "") -> None:
     """Fire-and-forget: distil one chat turn into the graph (best effort)."""
     try:
-        await ingest_text(f"Founder said: {founder_msg}\nZax replied: {zax_reply}", "chat")
+        ref = ("message", message_id) if message_id else None
+        await ingest_text(f"Founder said: {founder_msg}\nZax replied: {zax_reply}", "chat", ref)
     except Exception as exc:
         db.log_event("error", "graph", f"Graph ingest failed: {str(exc)[:160]}")
 
@@ -318,12 +348,26 @@ async def ingest_exchange(founder_msg: str, zax_reply: str) -> None:
 _pending_graph_tasks: set[asyncio.Task] = set()
 
 
-def schedule_exchange(founder_msg: str, zax_reply: str) -> None:
+def schedule_exchange(founder_msg: str, zax_reply: str, message_id: str = "") -> None:
     """Schedule ingestion without blocking the chat response."""
     if not AVAILABLE:
         return
     try:
-        task = asyncio.get_event_loop().create_task(ingest_exchange(founder_msg, zax_reply))
+        task = asyncio.get_event_loop().create_task(
+            ingest_exchange(founder_msg, zax_reply, message_id))
+        _pending_graph_tasks.add(task)
+        task.add_done_callback(_pending_graph_tasks.discard)
+    except RuntimeError:
+        pass
+
+
+def schedule_memory(mem_id: int, content: str, kind: str) -> None:
+    """Fire-and-forget: index a freshly-stored memory into the graph (provenance-linked)
+    so the mediator can route to it immediately, without blocking the writer."""
+    if not AVAILABLE or not mem_id:
+        return
+    try:
+        task = asyncio.get_event_loop().create_task(ingest_memory(mem_id, content, kind))
         _pending_graph_tasks.add(task)
         task.add_done_callback(_pending_graph_tasks.discard)
     except RuntimeError:
@@ -334,8 +378,20 @@ async def ingest_task(task: dict) -> None:
     if not AVAILABLE:
         return
     body = f"Task: {task['title']}. {task.get('description', '')}. Outcome: {(task.get('result') or '')[:600]}"
+    ref = ("task", task["id"]) if task.get("id") else None
     try:
-        await ingest_text(body, f"task:{task['title'][:40]}")
+        await ingest_text(body, f"task:{task['title'][:40]}", ref)
+    except Exception:
+        pass
+
+
+async def ingest_memory(mem_id: int, content: str, kind: str) -> None:
+    """Index a single institutional memory (skill/lesson/report/coaching) into the
+    graph the moment it's stored, provenance-linked so the mediator can route to it."""
+    if not AVAILABLE or not mem_id:
+        return
+    try:
+        await ingest_text(content, f"memory:{kind}", ("memory", str(mem_id)))
     except Exception:
         pass
 
@@ -353,6 +409,6 @@ async def rebuild() -> dict:
         if t.get("result"):
             await ingest_task(t)
     for m in db.list_memories(limit=100):
-        await ingest_text(m["content"], f"memory:{m['kind']}")
+        await ingest_text(m["content"], f"memory:{m['kind']}", ("memory", str(m["id"])))
     graph_json()
     return {"ok": True, **stats()}
