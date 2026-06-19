@@ -167,9 +167,14 @@ included; it reads the host's `$PORT`, binds `0.0.0.0`, and keeps all state in `
 
 **Railway (recommended):**
 1. New Project → **Deploy from GitHub repo** → pick `bhupen5c/zax` (Railway uses the Dockerfile).
-2. Add a **Volume** mounted at **`/data`** (this persists `zax.db` across deploys).
+2. **Storage** — pick one:
+   - **Supabase Postgres (recommended):** set `DATABASE_URL` to your Supabase connection
+     string (Dashboard → Connect → Session pooler URI). No volume needed; managed +
+     backed up. Zax auto-creates its schema on first boot.
+   - **SQLite + volume:** add a **Volume** mounted at **`/data`** and set `ZAX_DATA_DIR=/data`
+     (persists `zax.db` across deploys).
 3. **Variables:**
-   - `ZAX_DATA_DIR=/data`
+   - `DATABASE_URL=postgresql://…` (Supabase) — *or* `ZAX_DATA_DIR=/data` with a volume
    - `ZAX_ACCESS_PASSWORD=<a strong password>` — **required**; gates the public URL behind
      HTTP Basic auth (username can be anything) so strangers can't drive your org or spend
      your tokens.

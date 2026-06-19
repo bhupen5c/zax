@@ -13,6 +13,9 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = Path(os.environ.get("ZAX_DATA_DIR", str(ROOT / "data")))
 WORKSPACE_DIR = DATA_DIR / "workspace"
 DB_PATH = DATA_DIR / "zax.db"
+# When set (e.g. a Supabase Postgres connection string), Zax stores everything in
+# Postgres instead of the local SQLite file. Blank = SQLite (local + tests).
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 
 FOUNDER_NAME = os.environ.get("ZAX_FOUNDER_NAME", "Bhupen")
 HOST = os.environ.get("ZAX_HOST", "127.0.0.1")

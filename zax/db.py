@@ -1,6 +1,10 @@
-"""SQLite persistence for Zax: org, tasks, events, chat, memory, routines.
+"""Persistence for Zax: org, tasks, events, chat, memory, graph, routines.
 
-Single connection guarded by a lock — simple and safe for a local single-user app.
+DUAL BACKEND:
+  • SQLite (default) — a single local file, guarded by a lock. Local + tests.
+  • Postgres — when config.DATABASE_URL is set (e.g. Supabase). Same Python API;
+    queries are placeholder-translated (?→%s) and a few backend-specific spots
+    (auto-increment via RETURNING, full-text recall via tsvector) branch on PG.
 """
 import json
 import sqlite3
@@ -11,8 +15,10 @@ from typing import Any, Optional
 
 from . import config
 
+PG = bool(config.DATABASE_URL)  # Postgres mode when a connection string is set
+
 _lock = threading.Lock()
-_conn: Optional[sqlite3.Connection] = None
+_conn: Any = None
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS agents (
@@ -151,9 +157,93 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE OF content ON memories BEG
 END;
 """
 
+# Postgres-native schema (Supabase). Identity columns replace AUTOINCREMENT; a GIN
+# tsvector index replaces FTS5; DOUBLE PRECISION replaces REAL.
+PG_SCHEMA = """
+CREATE TABLE IF NOT EXISTS agents (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, title TEXT NOT NULL, role TEXT NOT NULL,
+    persona TEXT NOT NULL, model TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
+    performance DOUBLE PRECISION NOT NULL DEFAULT 75.0, tasks_done INTEGER NOT NULL DEFAULT 0,
+    tasks_failed INTEGER NOT NULL DEFAULT 0, tokens_used BIGINT NOT NULL DEFAULT 0,
+    token_budget BIGINT NOT NULL, budget_month TEXT NOT NULL DEFAULT '',
+    skill TEXT NOT NULL DEFAULT '', hired_at DOUBLE PRECISION NOT NULL,
+    fired_at DOUBLE PRECISION, fired_reason TEXT
+);
+CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'inbox', priority INTEGER NOT NULL DEFAULT 2, agent_id TEXT,
+    result TEXT, score INTEGER, feedback TEXT, tokens_used BIGINT NOT NULL DEFAULT 0,
+    progress INTEGER NOT NULL DEFAULT 0, created_at DOUBLE PRECISION NOT NULL,
+    updated_at DOUBLE PRECISION NOT NULL
+);
+CREATE TABLE IF NOT EXISTS events (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, ts DOUBLE PRECISION NOT NULL,
+    kind TEXT NOT NULL, actor TEXT NOT NULL, message TEXT NOT NULL, data TEXT
+);
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT 'New chat',
+    created DOUBLE PRECISION NOT NULL, updated DOUBLE PRECISION NOT NULL
+);
+CREATE TABLE IF NOT EXISTS messages (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, ts DOUBLE PRECISION NOT NULL,
+    role TEXT NOT NULL, content TEXT NOT NULL, session_id TEXT NOT NULL DEFAULT 'main'
+);
+CREATE TABLE IF NOT EXISTS routines (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL,
+    interval_minutes INTEGER NOT NULL, last_run DOUBLE PRECISION NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS graph_nodes (
+    id TEXT PRIMARY KEY, label TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'concept',
+    summary TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '',
+    weight DOUBLE PRECISION NOT NULL DEFAULT 1.0, created DOUBLE PRECISION NOT NULL,
+    last_seen DOUBLE PRECISION NOT NULL
+);
+CREATE TABLE IF NOT EXISTS graph_edges (
+    src TEXT NOT NULL, tgt TEXT NOT NULL, relation TEXT NOT NULL DEFAULT 'related to',
+    confidence TEXT NOT NULL DEFAULT 'INFERRED', context TEXT NOT NULL DEFAULT '',
+    weight DOUBLE PRECISION NOT NULL DEFAULT 1.0, created DOUBLE PRECISION NOT NULL,
+    PRIMARY KEY (src, tgt, relation)
+);
+CREATE TABLE IF NOT EXISTS graph_provenance (
+    node_id TEXT NOT NULL, ref_kind TEXT NOT NULL, ref_id TEXT NOT NULL,
+    weight DOUBLE PRECISION NOT NULL DEFAULT 1.0, created DOUBLE PRECISION NOT NULL,
+    PRIMARY KEY (node_id, ref_kind, ref_id)
+);
+CREATE INDEX IF NOT EXISTS idx_provenance_node ON graph_provenance(node_id);
+CREATE TABLE IF NOT EXISTS memories (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, content TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'note', agent TEXT NOT NULL DEFAULT '',
+    importance DOUBLE PRECISION NOT NULL DEFAULT 1.0, uses INTEGER NOT NULL DEFAULT 0,
+    created DOUBLE PRECISION NOT NULL, last_used DOUBLE PRECISION NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_memories_fts ON memories USING GIN (to_tsvector('english', content));
+"""
 
-def connect() -> sqlite3.Connection:
+
+def _connect_pg():
+    """Open (or reopen) the Postgres connection, ensure schema + the 'main' session."""
+    import psycopg
+    from psycopg.rows import dict_row
+    conn = psycopg.connect(config.DATABASE_URL, autocommit=True, row_factory=dict_row)
+    with conn.cursor() as cur:
+        for stmt in [s.strip() for s in PG_SCHEMA.split(";") if s.strip()]:
+            cur.execute(stmt)
+        cur.execute("SELECT 1 FROM chat_sessions WHERE id='main'")
+        if not cur.fetchone():
+            now = time.time()
+            cur.execute("INSERT INTO chat_sessions (id, title, created, updated) "
+                        "VALUES ('main','Main',%s,%s)", (now, now))
+    return conn
+
+
+def connect():
     global _conn
+    if PG:
+        if _conn is None or getattr(_conn, "closed", False):
+            _conn = _connect_pg()
+        return _conn
     if _conn is None:
         config.DATA_DIR.mkdir(parents=True, exist_ok=True)
         config.WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
@@ -195,16 +285,57 @@ def _rows(cur) -> list[dict]:
     return [dict(r) for r in cur.fetchall()]
 
 
+def _pgsql(sql: str) -> str:
+    # Our queries use ? placeholders and never a literal '?', so a plain swap to
+    # psycopg's %s is safe. (No literal '%' appears in any query either.)
+    return sql.replace("?", "%s")
+
+
 def query(sql: str, params: tuple = ()) -> list[dict]:
     with _lock:
-        return _rows(connect().execute(sql, params))
+        conn = connect()
+        if PG:
+            with conn.cursor() as cur:
+                cur.execute(_pgsql(sql), params)
+                return cur.fetchall()  # dict_row → list[dict]
+        return _rows(conn.execute(sql, params))
 
 
 def execute(sql: str, params: tuple = ()) -> None:
     with _lock:
         conn = connect()
+        if PG:
+            with conn.cursor() as cur:
+                cur.execute(_pgsql(sql), params)
+            return
         conn.execute(sql, params)
         conn.commit()
+
+
+def _insert_returning_id(sql: str, params: tuple) -> int:
+    """INSERT and return the new auto-increment id (RETURNING on PG, lastrowid on SQLite)."""
+    with _lock:
+        conn = connect()
+        if PG:
+            with conn.cursor() as cur:
+                cur.execute(_pgsql(sql) + " RETURNING id", params)
+                return int(cur.fetchone()["id"])
+        cur = conn.execute(sql, params)
+        conn.commit()
+        return int(cur.lastrowid)
+
+
+def _execute_rowcount(sql: str, params: tuple) -> int:
+    """Run a write and return the number of affected rows (for compare-and-set)."""
+    with _lock:
+        conn = connect()
+        if PG:
+            with conn.cursor() as cur:
+                cur.execute(_pgsql(sql), params)
+                return cur.rowcount
+        cur = conn.execute(sql, params)
+        conn.commit()
+        return cur.rowcount
 
 
 def new_id() -> str:
@@ -229,8 +360,8 @@ def events_since(after_id: int = 0, limit: int = 100) -> list[dict]:
     # caller advances past this window and picks up the rest next poll. Displayed
     # newest-first to match feed/ticker consumers.
     return query(
-        "SELECT * FROM (SELECT * FROM events WHERE id > ? ORDER BY id ASC LIMIT ?) "
-        "ORDER BY id DESC",
+        "SELECT * FROM (SELECT * FROM events WHERE id > ? ORDER BY id ASC LIMIT ?) AS e "
+        "ORDER BY id DESC",  # subquery alias 'e' required by Postgres (harmless in SQLite)
         (after_id, limit),
     )
 
@@ -286,16 +417,11 @@ def rescue_orphan_tasks() -> int:
     """Requeue any 'assigned' ticket whose agent is no longer active (fired or
     throttled) so an active agent can pick it up — otherwise it would stall
     forever (the execute query only runs active agents' tickets)."""
-    with _lock:
-        conn = connect()
-        cur = conn.execute(
-            "UPDATE tasks SET status='inbox', agent_id=NULL, progress=0, updated_at=? "
-            "WHERE status='assigned' AND (agent_id IS NULL OR agent_id NOT IN "
-            "(SELECT id FROM agents WHERE status='active'))",
-            (time.time(),),
-        )
-        conn.commit()
-        return cur.rowcount
+    return _execute_rowcount(
+        "UPDATE tasks SET status='inbox', agent_id=NULL, progress=0, updated_at=? "
+        "WHERE status='assigned' AND (agent_id IS NULL OR agent_id NOT IN "
+        "(SELECT id FROM agents WHERE status='active'))",
+        (time.time(),))
 
 
 def add_agent_tokens(agent_id: str, tokens: int) -> None:
@@ -369,14 +495,9 @@ def finalize_task(task_id: str, agent_id: str, **fields) -> bool:
     instead of orphaning it). Guards against the fire-during-execution race."""
     fields["updated_at"] = time.time()
     cols = ", ".join(f"{k}=?" for k in fields)
-    with _lock:
-        conn = connect()
-        cur = conn.execute(
-            f"UPDATE tasks SET {cols} WHERE id=? AND agent_id=? AND status='in_progress'",
-            (*fields.values(), task_id, agent_id),
-        )
-        conn.commit()
-        return cur.rowcount > 0
+    return _execute_rowcount(
+        f"UPDATE tasks SET {cols} WHERE id=? AND agent_id=? AND status='in_progress'",
+        (*fields.values(), task_id, agent_id)) > 0
 
 
 # ---------------------------------------------------------------- chat sessions
@@ -417,12 +538,9 @@ def touch_session(session_id: str) -> None:
 # ---------------------------------------------------------------- chat
 
 def add_message(role: str, content: str, session_id: str = "main") -> int:
-    with _lock:
-        conn = connect()
-        cur = conn.execute("INSERT INTO messages (ts, role, content, session_id) VALUES (?,?,?,?)",
-                           (time.time(), role, content, session_id))
-        conn.commit()
-        mid = int(cur.lastrowid)
+    mid = _insert_returning_id(
+        "INSERT INTO messages (ts, role, content, session_id) VALUES (?,?,?,?)",
+        (time.time(), role, content, session_id))
     touch_session(session_id)
     return mid
 
@@ -448,14 +566,9 @@ def remember(content: str, kind: str = "note", agent: str = "", importance: floa
                 (time.time(), dup[0]["id"]))
         return dup[0]["id"]
     now = time.time()
-    with _lock:
-        conn = connect()
-        cur = conn.execute(
-            "INSERT INTO memories (content, kind, agent, importance, created, last_used) VALUES (?,?,?,?,?,?)",
-            (content, kind, agent, importance, now, now),
-        )
-        conn.commit()
-        return int(cur.lastrowid)
+    return _insert_returning_id(
+        "INSERT INTO memories (content, kind, agent, importance, created, last_used) VALUES (?,?,?,?,?,?)",
+        (content, kind, agent, importance, now, now))
 
 
 def recall(text: str, limit: int = 3, kinds: Optional[list[str]] = None,
@@ -464,21 +577,32 @@ def recall(text: str, limit: int = 3, kinds: Optional[list[str]] = None,
     words = [w for w in "".join(c if c.isalnum() else " " for c in text).split() if len(w) > 2]
     if not words:
         return []
-    match = " OR ".join(dict.fromkeys(words[:12]))
-    sql = ("SELECT m.* FROM memories_fts f JOIN memories m ON m.id = f.rowid"
-           " WHERE memories_fts MATCH ?")
-    params: list = [match]
+    uniq = list(dict.fromkeys(words[:12]))
+    if PG:
+        # Postgres full-text: websearch_to_tsquery handles the OR query leniently,
+        # ts_rank orders candidates (the Python pass below re-scores by importance).
+        tsq = " OR ".join(uniq)
+        sql = ("SELECT m.*, ts_rank(to_tsvector('english', m.content), "
+               "websearch_to_tsquery('english', ?)) AS _rank FROM memories m "
+               "WHERE to_tsvector('english', m.content) @@ websearch_to_tsquery('english', ?)")
+        params: list = [tsq, tsq]
+        order = " ORDER BY _rank DESC LIMIT ?"
+    else:
+        sql = ("SELECT m.* FROM memories_fts f JOIN memories m ON m.id = f.rowid"
+               " WHERE memories_fts MATCH ?")
+        params = [" OR ".join(uniq)]
+        order = " ORDER BY rank LIMIT ?"
     if kinds:
         sql += f" AND m.kind IN ({','.join('?' * len(kinds))})"
         params += kinds
     if agent:
         sql += " AND (m.agent = '' OR m.agent = ?)"
         params.append(agent)
-    sql += " ORDER BY rank LIMIT ?"
+    sql += order
     params.append(max(limit * 4, 12))
     try:
         candidates = query(sql, tuple(params))
-    except sqlite3.OperationalError:
+    except Exception:
         return []
     now = time.time()
     scored = []
