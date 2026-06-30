@@ -79,9 +79,34 @@ def _assert_public_url(url: str) -> None:
             raise ValueError(f"blocked non-public address: {host} -> {ip}")
 
 
-async def web_search(query: str) -> str:
-    client = _get_client()
-    r = await client.post(
+def _tavily_key() -> str:
+    """Tavily key from the Settings store or the TAVILY_API_KEY env var (either works)."""
+    return (db.get_setting("tools.tavily_api_key", "") or os.environ.get("TAVILY_API_KEY", "")).strip()
+
+
+async def _tavily_search(query: str, key: str) -> str:
+    """Tavily — purpose-built for AI research: ranked results WITH extracted page
+    content, so the agent cites primary sources instead of whatever SEO blog a raw
+    scrape surfaces. This is what lifts research-quality toward a deep browser."""
+    r = await _get_client().post(
+        "https://api.tavily.com/search",
+        json={"api_key": key, "query": query, "search_depth": "advanced",
+              "max_results": 6, "include_answer": False, "include_raw_content": False},
+        timeout=httpx.Timeout(30.0),
+    )
+    r.raise_for_status()
+    results = []
+    for item in r.json().get("results", []):
+        title = _strip_tags(item.get("title", ""))
+        url = item.get("url", "")
+        content = _strip_tags(item.get("content", ""))
+        results.append(f"- {title}\n  {url}\n  {content[:400]}")
+    return "\n".join(results) or "No results."
+
+
+async def _ddg_search(query: str) -> str:
+    """Free fallback: scrape DuckDuckGo's HTML results (title/url/snippet only)."""
+    r = await _get_client().post(
         "https://html.duckduckgo.com/html/",
         data={"q": query},
         headers={"User-Agent": "Mozilla/5.0 (zax-agent)"},
@@ -98,6 +123,19 @@ async def web_search(query: str) -> str:
         if len(results) >= 6:
             break
     return "\n".join(results) or "No results."
+
+
+async def web_search(query: str) -> str:
+    """Web search. Uses Tavily (AI-research-grade source quality) when a key is set
+    (Settings → tools.tavily_api_key, or env TAVILY_API_KEY); otherwise falls back to
+    a free DuckDuckGo HTML scrape so search always works."""
+    key = _tavily_key()
+    if key:
+        try:
+            return await _tavily_search(query, key)
+        except Exception:
+            pass  # quota/network/API change — degrade gracefully to the free scrape
+    return await _ddg_search(query)
 
 
 async def fetch_url(url: str) -> str:
