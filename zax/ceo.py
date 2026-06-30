@@ -267,8 +267,9 @@ def hire_from_template(need: str) -> dict:
     name = next((n for n in CODENAMES if n not in taken), None) or f"Unit-{random.randint(10, 99)}"
     agent = db.create_agent(
         name, f"{need.title()} Specialist"[:40], need,
-        f"You are {name}, a specialist in {need}. You deliver complete, well-structured work "
-        f"with a clear bottom line and no filler.",
+        f"You are {name}, a specialist in {need}. You deliver exactly what's asked, directly and "
+        f"concisely — the answer first, no preamble or filler, respecting any explicit format or "
+        f"length constraint.",
         "",
     )
     db.log_event("hire", "zax", f"Zax hired {agent['name']} — {agent['title']}")

@@ -34,7 +34,7 @@ ZAX_MODEL = os.environ.get("ZAX_MODEL", "")  # blank = provider default
 
 # Heartbeat / org policy (the Paperclip side)
 HEARTBEAT_SECONDS = int(os.environ.get("ZAX_HEARTBEAT_SECONDS", "20"))
-MAX_TOOL_STEPS = int(os.environ.get("ZAX_MAX_TOOL_STEPS", "5"))
+MAX_TOOL_STEPS = int(os.environ.get("ZAX_MAX_TOOL_STEPS", "7"))
 MAX_EXECUTIONS_PER_TICK = int(os.environ.get("ZAX_MAX_EXECUTIONS_PER_TICK", "2"))
 # When you delegate work, Zax drains the queue immediately (not on the next
 # heartbeat). This caps how many tasks one immediate drain executes before

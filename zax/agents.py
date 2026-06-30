@@ -6,6 +6,39 @@ import re
 from . import config, db, llm, memory, tools
 
 
+# Shared output discipline injected into EVERY agent (specialist or generic). This is
+# what keeps deliverables tight and send-ready: blind-judge benchmarking showed Zax's
+# work was correct but lost on padding (memo letterheads, restated prompts, gratuitous
+# disclaimers, multiple variants), ignored constraints (e.g. "3 lines"), and weak/invented
+# citations. Each rule below maps to one of those failure modes.
+OUTPUT_RULES = (
+    "OUTPUT DISCIPLINE — you are graded on this, and sloppiness here costs you the score:\n"
+    "1. Deliver ONLY what was asked, directly. No letterhead, no \"Prepared by / To / From / "
+    "Date / Subject:\" headers, no cover note, no preamble, no restating the task, no sign-off. "
+    "Your first line is already the answer.\n"
+    "2. Obey every explicit constraint EXACTLY: line counts (\"3 lines\"), item counts (\"max 8 "
+    "items\"), word/character limits, and \"one X\". A 3-line email is exactly one email of three "
+    "lines — not a paragraph plus three alternates.\n"
+    "3. Lead with the answer or recommendation, then the substance that backs it. Cut filler and "
+    "hedging — but NEVER cut substance. Be SPECIFIC and CONCRETE: name real tools, products, "
+    "examples and (sourced) numbers instead of generic statements, and include every part the task "
+    "explicitly asks for (e.g. a clearly labelled one-line takeaway, each requested section). "
+    "\"Concise\" means no padding — NOT thin or generic.\n"
+    "4. Do NOT add disclaimers, caveats, or \"this is not professional advice\" notes unless the "
+    "task explicitly asks for them.\n"
+    "5. Facts and figures: cite authoritative PRIMARY sources (official docs, standards, reputable "
+    "benchmarks/indices like DB-Engines) by real URL — never invent a URL or source. Every URL you "
+    "cite MUST be copied verbatim from a web_search/fetch_url result in THIS run; never type or "
+    "recall a URL from memory (that is how fabricated/misspelled domains slip in). State a precise "
+    "figure (latency, %, $, throughput, count) ONLY if it came from a source you actually retrieved "
+    "this run; otherwise describe it qualitatively or label it \"vendor-claimed / unverified\". "
+    "Inventing precise-looking numbers is a correctness failure.\n"
+    "6. Use a compact Markdown table when comparing 3+ options or showing period-over-period "
+    "numbers — it is scanned far faster than prose.\n"
+    "7. Produce ONE version of the requested artifact. Offer alternatives only if the task asks for options."
+)
+
+
 def _deliverable(text: str) -> str:
     """Pull the agent's answer out of a model reply, tolerating a {"final": "..."}
     wrapper even when it's truncated or has unescaped newlines (so the JSON
@@ -24,6 +57,14 @@ def _deliverable(text: str) -> str:
     return text.strip()
 
 
+def _is_leaked_tool_call(s: str) -> bool:
+    """True if a 'deliverable' is really an unparsed tool-call JSON leaking through —
+    e.g. a write_file whose large code payload (raw newlines/quotes) broke JSON parsing,
+    so extract_json couldn't see the "tool" key and the raw object fell through. We must
+    never store that as the answer; force a clean no-tools synthesis instead."""
+    return bool(re.match(r'\s*\{\s*"tool"\s*:', s))
+
+
 async def execute_task(agent: dict, task: dict) -> None:
     db.update_task(task["id"], status="in_progress", progress=15)
     db.log_event("work", agent["name"], f"{agent['name']} started “{task['title']}”")
@@ -38,7 +79,8 @@ async def execute_task(agent: dict, task: dict) -> None:
         f"{agent['persona']}\n\n"
         f"You are {agent['name']}, {agent['title']} at {config.FOUNDER_NAME}'s organization, "
         f"reporting to Zax (the AI CEO). Complete the assigned task to a high standard — "
-        f"Zax will score your work and your job depends on it."
+        f"Zax will score your work and your job depends on it.\n\n"
+        f"{OUTPUT_RULES}"
         + (f"\n\n{mem['block']}" if mem["block"] else "")
         + f"\n\n{tools.TOOL_SPECS}"
     )
@@ -71,7 +113,10 @@ async def execute_task(agent: dict, task: dict) -> None:
                 messages.append({"role": "assistant", "content": text})
                 messages.append({"role": "user", "content": f"TOOL RESULT:\n{output[:6000]}{budget}"})
                 continue
-            result = _deliverable(text)
+            candidate = _deliverable(text)
+            if _is_leaked_tool_call(candidate):
+                break  # leave result=None so the forced no-tools synthesis runs below
+            result = candidate
             break
 
         # Tool budget exhausted without a final answer — force ONE no-tools

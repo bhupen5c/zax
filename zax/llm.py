@@ -114,8 +114,8 @@ PROVIDERS: dict[str, dict] = {
         "kind": "openai",
         "env": "DEEPSEEK_API_KEY",
         "base": "https://api.deepseek.com/v1",
-        "default_model": "deepseek-chat",
-        "desc": "DeepSeek models.",
+        "default_model": "deepseek-v4-pro",
+        "desc": "DeepSeek models (deepseek-v4-pro / deepseek-v4-flash).",
     },
     "xai": {
         "label": "xAI Grok",
