@@ -80,8 +80,11 @@ def _assert_public_url(url: str) -> None:
 
 
 def _tavily_key() -> str:
-    """Tavily key from the Settings store or the TAVILY_API_KEY env var (either works)."""
-    return (db.get_setting("tools.tavily_api_key", "") or os.environ.get("TAVILY_API_KEY", "")).strip()
+    """Tavily key from the Settings store or the TAVILY_API_KEY env var (either works).
+    Real Tavily keys start with 'tvly-'; anything else (blank, placeholder) is ignored so
+    web_search safely falls back to the free scrape until a genuine key is set."""
+    key = (db.get_setting("tools.tavily_api_key", "") or os.environ.get("TAVILY_API_KEY", "")).strip()
+    return key if key.startswith("tvly-") else ""
 
 
 async def _tavily_search(query: str, key: str) -> str:
