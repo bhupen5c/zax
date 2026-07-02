@@ -99,6 +99,7 @@ async def chat(founder_message: str, session_id: str = "main") -> dict:
         _prompt("zax_system.txt")
         .replace("{founder}", config.FOUNDER_NAME)
         .replace("{org_state}", json.dumps(org_state(), indent=1))
+        .replace("{core}", llm.core_options())
         .replace("{memory}", memory_block)
     )
     raw_turns = memory.raw_turns_for(mem["coverage"])
@@ -224,6 +225,25 @@ def _run_action(act: dict) -> str:
         skill_key = act.get("skill") or (skills.match_skill(act.get("role", "")) or {}).get("key")
         agent = hire_from_skill(skill_key) if skill_key else hire_from_template(act.get("role", "generalist"))
         return f"✓ Hired {agent['name']} — {agent['title']}."
+    if kind == "set_core":
+        pid = str(act.get("provider") or llm.resolve_provider()).strip().lower()
+        if pid not in llm.PROVIDERS:
+            return f"(unknown provider: {pid})"
+        spec = llm.PROVIDERS[pid]
+        if not llm.is_configured(pid):
+            return (f"({spec['label']} isn't configured yet — add its API key in "
+                    f"Settings → Intelligence Core, then ask me again)")
+        model = str(act.get("model") or "").strip()
+        tier = str(act.get("reasoning") or "").strip().lower()
+        if tier and not model:
+            tiers = spec.get("tiers") or {}
+            model = tiers.get("deep" if tier in ("deep", "high", "max", "more", "on") else "fast", "")
+            if not model:
+                return (f"({spec['label']} has no reasoning tiers registered — "
+                        f"name a specific model instead)")
+        eff = llm.set_core(pid, model)
+        db.log_event("config", "zax", f"Zax switched the core to {spec['label']} · {eff}")
+        return f"✓ Core switched: {spec['label']} · {eff} — effective immediately, org-wide."
     if kind == "fire":
         name = act.get("agent_name", "")
         agent = next((a for a in db.active_agents() if a["name"].lower() == name.lower()), None)

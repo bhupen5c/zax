@@ -58,6 +58,8 @@ PROVIDERS: dict[str, dict] = {
         "label": "Claude · subscription",
         "kind": "cli",
         "default_model": "sonnet",
+        "models": ["sonnet", "opus", "haiku"],
+        "tiers": {"deep": "opus", "fast": "haiku"},
         "desc": "Uses your Anthropic subscription through the `claude` terminal login — "
                 "no API key. Run `claude login` once. Models: sonnet, opus, haiku, or a full model id.",
     },
@@ -67,6 +69,8 @@ PROVIDERS: dict[str, dict] = {
         "env": "ANTHROPIC_API_KEY",
         "base": "https://api.anthropic.com",
         "default_model": "claude-sonnet-4-6",
+        "models": ["claude-sonnet-4-6", "claude-opus-4-8", "claude-haiku-4-5-20251001"],
+        "tiers": {"deep": "claude-opus-4-8", "fast": "claude-haiku-4-5-20251001"},
         "desc": "Claude models via metered API key.",
     },
     "openai": {
@@ -75,6 +79,8 @@ PROVIDERS: dict[str, dict] = {
         "env": "OPENAI_API_KEY",
         "base": "https://api.openai.com/v1",
         "default_model": "gpt-4o-mini",
+        "models": ["gpt-4o", "gpt-4o-mini", "o3", "o4-mini"],
+        "tiers": {"deep": "o3", "fast": "gpt-4o-mini"},
         "desc": "GPT models.",
     },
     "google": {
@@ -83,6 +89,8 @@ PROVIDERS: dict[str, dict] = {
         "env": "GEMINI_API_KEY",
         "base": "https://generativelanguage.googleapis.com/v1beta/openai",
         "default_model": "gemini-2.0-flash",
+        "models": ["gemini-2.0-pro", "gemini-2.0-flash"],
+        "tiers": {"deep": "gemini-2.0-pro", "fast": "gemini-2.0-flash"},
         "desc": "Gemini models via Google's OpenAI-compatible endpoint.",
     },
     "openrouter": {
@@ -99,6 +107,8 @@ PROVIDERS: dict[str, dict] = {
         "env": "GROQ_API_KEY",
         "base": "https://api.groq.com/openai/v1",
         "default_model": "llama-3.3-70b-versatile",
+        "models": ["llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b"],
+        "tiers": {"deep": "deepseek-r1-distill-llama-70b", "fast": "llama-3.3-70b-versatile"},
         "desc": "Ultra-fast open models on Groq hardware.",
     },
     "mistral": {
@@ -107,6 +117,8 @@ PROVIDERS: dict[str, dict] = {
         "env": "MISTRAL_API_KEY",
         "base": "https://api.mistral.ai/v1",
         "default_model": "mistral-large-latest",
+        "models": ["mistral-large-latest", "mistral-small-latest"],
+        "tiers": {"deep": "mistral-large-latest", "fast": "mistral-small-latest"},
         "desc": "Mistral models.",
     },
     "deepseek": {
@@ -115,6 +127,8 @@ PROVIDERS: dict[str, dict] = {
         "env": "DEEPSEEK_API_KEY",
         "base": "https://api.deepseek.com/v1",
         "default_model": "deepseek-v4-pro",
+        "models": ["deepseek-v4-pro", "deepseek-v4-flash"],
+        "tiers": {"deep": "deepseek-v4-pro", "fast": "deepseek-v4-flash"},
         "desc": "DeepSeek models (deepseek-v4-pro / deepseek-v4-flash).",
     },
     "xai": {
@@ -123,6 +137,8 @@ PROVIDERS: dict[str, dict] = {
         "env": "XAI_API_KEY",
         "base": "https://api.x.ai/v1",
         "default_model": "grok-3",
+        "models": ["grok-3", "grok-3-mini"],
+        "tiers": {"deep": "grok-3", "fast": "grok-3-mini"},
         "desc": "Grok models.",
     },
     "together": {
@@ -211,6 +227,35 @@ def is_configured(pid: str) -> bool:
     if pid == "custom":
         return bool(base_url(pid) and model_for(pid))
     return bool(api_key(pid))
+
+
+def set_core(pid: str, model: str = "") -> str:
+    """Switch the active provider (and optionally its model) — used by Zax's chat-level
+    set_core action. Clears the sticky last-working-provider so the status badge and
+    the next call reflect the switch immediately. Returns the now-effective model."""
+    global _last_working_provider
+    db.set_setting("provider.active", pid)
+    if model:
+        db.set_setting(f"provider.{pid}.model", model.strip())
+    _last_working_provider = ""
+    return model_for(pid)
+
+
+def core_options() -> str:
+    """Compact, prompt-friendly inventory of providers/models so Zax can switch cores
+    from chat without inventing names. '►' marks the active provider."""
+    active = resolve_provider()
+    lines = []
+    for pid, spec in PROVIDERS.items():
+        if pid == "mock":
+            continue
+        mark = "►" if pid == active else " "
+        ready = "ready" if is_configured(pid) else "NO KEY"
+        models = ", ".join(spec.get("models") or [m for m in [spec.get("default_model")] if m]) or "any model id"
+        tiers = spec.get("tiers")
+        tier_s = f" | reasoning tiers: deep={tiers['deep']}, fast={tiers['fast']}" if tiers else ""
+        lines.append(f"{mark} {pid} ({spec['label']}, {ready}) current={model_for(pid)} | models: {models}{tier_s}")
+    return "\n".join(lines)
 
 
 async def test(pid: str = "") -> tuple[bool, str]:
