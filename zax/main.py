@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from . import api, ceo, config, db, heartbeat, llm, telegram
+from . import api, ceo, config, db, heartbeat, llm, skills, telegram
 
 STATIC = Path(__file__).parent / "static"
 
@@ -41,6 +41,17 @@ async def lifespan(app: FastAPI):
     # it forever (it filters score IS NULL) and it shows as stuck 'in progress'.
     db.execute("UPDATE tasks SET status=CASE WHEN score < 30 THEN 'failed' ELSE 'done' END, "
                "progress=100 WHERE status IN ('assigned','in_progress') AND score IS NOT NULL")
+    # Personas are snapshotted into the DB at hire time, which silently pins agents
+    # to whatever skills.py said back then. Re-sync on every boot so skills.py stays
+    # the single source of truth. Legacy agents that predate the skill column are
+    # relinked by name (packs use fixed names like Quill/Cipher/Lyra).
+    for pack in skills.SKILLS:
+        db.execute("UPDATE agents SET skill=? WHERE skill IS NULL AND name=? AND status='active'",
+                   (pack["key"], pack["name"]))
+        db.execute("UPDATE agents SET skill=? WHERE skill='' AND name=? AND status='active'",
+                   (pack["key"], pack["name"]))
+        db.execute("UPDATE agents SET persona=? WHERE skill=? AND persona != ?",
+                   (pack["persona"], pack["key"], pack["persona"]))
     heartbeat.start()
     telegram.start()  # no-op unless a bot token is configured
     provider = llm.resolve_provider()
