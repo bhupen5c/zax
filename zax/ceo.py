@@ -453,7 +453,9 @@ async def greeting() -> str:
             f"It is {tod}. Org state: {json.dumps(state)}"
         )
         text, _ = await asyncio.wait_for(
-            llm.chat(system, [{"role": "user", "content": "I just opened the app. Greet me."}], max_tokens=120),
+            # 800, not 120: reasoning models think from this same budget — a tight cap
+            # truncates before any visible text and the greeting errors out.
+            llm.chat(system, [{"role": "user", "content": "I just opened the app. Greet me."}], max_tokens=800),
             timeout=30,
         )
         return text.strip() or fallback

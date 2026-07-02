@@ -328,6 +328,8 @@ def provider_overview() -> list[dict]:
             "key_hint": f"…{key[-4:]}" if key else ("from environment" if env_key else ""),
             "model": model_for(pid),
             "default_model": spec["default_model"],
+            "models": spec.get("models") or ([spec["default_model"]] if spec["default_model"] else []),
+            "tiers": spec.get("tiers") or {},
             "base_url": base_url(pid) if pid in ("custom", "ollama") else "",
             "cli_found": cli_available() if pid == "claude-cli" else None,
         })
@@ -562,9 +564,20 @@ async def _openai_compat(pid: str, system: str, messages: list[dict],
         # some gateways return {"error": ...} with a 200 status
         raise RuntimeError(f"{pid}: {data.get('error', 'no completion returned')}")
     msg = choices[0].get("message", {})
-    # Reasoning models (e.g. Nemotron) sometimes leave `content` empty and put the
-    # answer in `reasoning`/`reasoning_content`. Fall back to those.
-    text = (msg.get("content") or msg.get("reasoning") or msg.get("reasoning_content") or "").strip()
+    text = (msg.get("content") or "").strip()
+    if not text:
+        finish = (choices[0].get("finish_reason") or "")
+        cot = (msg.get("reasoning") or msg.get("reasoning_content") or "").strip()
+        if cot and finish == "length":
+            # Reasoning model spent the whole budget thinking and got cut off before
+            # writing the answer. NEVER surface the raw chain-of-thought as the reply
+            # (it leaks into chat as "We need to respond as ZAX…") — fail loudly so
+            # the caller retries/raises the cap.
+            raise RuntimeError(f"{pid}: {model} spent the entire {max_tokens}-token "
+                               f"budget on hidden reasoning — raise max_tokens")
+        # Model genuinely finished but left its text in the reasoning field
+        # (e.g. Nemotron) — that IS the answer, keep the old fallback.
+        text = cot
     if not text:
         finish = (choices[0].get("finish_reason") or "")
         raise RuntimeError(f"{pid}: empty response from model"

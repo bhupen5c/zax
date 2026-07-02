@@ -354,6 +354,76 @@ nav { display: flex; flex-direction: column; gap: 4px; }
   cursor: pointer;
 }
 #voice-toggle.on { border-color: var(--cyan-dim); background: rgba(255, 190, 70, 0.08); }
+
+/* Core picker — Hermes-style model/provider dropdown, right in the chat header */
+#core-picker { position: relative; margin-left: 10px; }
+#core-btn {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--cyan);
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--line);
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#core-btn:hover { border-color: var(--cyan-dim); background: rgba(255, 190, 70, 0.08); }
+#core-btn .caret { opacity: 0.6; font-size: 9px; }
+#core-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  min-width: 290px;
+  max-height: 420px;
+  overflow-y: auto;
+  background: rgba(16, 12, 6, 0.97);
+  border: 1px solid var(--cyan-dim);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.65);
+  padding: 6px;
+}
+.core-group {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+  padding: 8px 10px 4px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.core-group .nokey { color: var(--dim); opacity: 0.7; font-size: 9px; }
+.core-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  padding: 7px 10px;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.core-item:hover { background: rgba(255, 190, 70, 0.1); color: var(--cyan); }
+.core-item .tier { font-size: 9px; color: var(--dim); letter-spacing: 0.06em; }
+.core-item.active { color: var(--cyan); }
+.core-item.active::after { content: "✓"; color: var(--cyan); }
+.core-item.disabled { opacity: 0.45; cursor: default; }
+.core-item.disabled:hover { background: transparent; color: var(--text); }
+.core-sep { border-top: 1px solid var(--line); margin: 6px 4px; }
+.core-note { font-size: 10px; color: var(--dim); padding: 6px 10px 8px; font-family: var(--mono); }
 .msg-speak {
   background: transparent;
   border: none;

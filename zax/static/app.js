@@ -1172,6 +1172,7 @@ function updateProviderBadge(status) {
   const badge = $("#provider-badge");
   const activeProvider = status.provider;
   const effectiveProvider = status._effective_provider || activeProvider;
+  updateCoreBtn(activeProvider, status.model);
   let text = `core: ${activeProvider}${status.model ? " · " + status.model : ""}`;
   if (effectiveProvider !== activeProvider) text += ` → ${effectiveProvider} (fallback)`;
   const err = status.circuit_breaker?.last_error;
@@ -1201,6 +1202,74 @@ function updateProviderBadge(status) {
   }
 }
 
+// ---------------- core picker (Hermes-style model dropdown in the chat header)
+
+function updateCoreBtn(provider, model) {
+  const btn = $("#core-btn");
+  if (btn) btn.innerHTML = `⚛ ${provider} · ${model || "?"} <span class="caret">▾</span>`;
+}
+
+async function renderCoreMenu() {
+  const menu = $("#core-menu");
+  const provs = await api.get("/providers");
+  const ready = provs.filter((p) => p.configured && p.id !== "mock");
+  ready.sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0)); // active provider on top, no scrolling to reach it
+  const locked = provs.filter((p) => !p.configured && p.id !== "mock");
+  let html = "";
+  for (const p of ready) {
+    html += `<div class="core-group"><span>${p.label}</span></div>`;
+    const models = p.models && p.models.length ? p.models : [p.model];
+    for (const m of models) {
+      const active = p.active && p.model === m;
+      const tier = p.tiers && p.tiers.deep === m ? "deep reasoning"
+                 : p.tiers && p.tiers.fast === m ? "fast" : "";
+      html += `<button class="core-item${active ? " active" : ""}" data-provider="${p.id}" data-model="${m}">
+                 <span>${m}</span>${tier ? `<span class="tier">${tier}</span>` : ""}</button>`;
+    }
+  }
+  if (locked.length) {
+    html += `<div class="core-sep"></div>`;
+    html += locked.map((p) =>
+      `<button class="core-item disabled" title="Add the API key in Settings → Intelligence Core">
+         <span>${p.label}</span><span class="tier">no key</span></button>`).join("");
+    html += `<div class="core-note">greyed cores need an API key — Settings → Intelligence Core</div>`;
+  }
+  menu.innerHTML = html;
+}
+
+function initCorePicker() {
+  const btn = $("#core-btn"), menu = $("#core-menu");
+  if (!btn) return;
+  btn.addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    if (menu.classList.contains("hidden")) {
+      await renderCoreMenu();
+      menu.classList.remove("hidden");
+    } else menu.classList.add("hidden");
+  });
+  // Delegated handler survives re-renders and works on scrolled items.
+  menu.addEventListener("click", async (ev) => {
+    const el = ev.target.closest(".core-item");
+    if (!el || el.classList.contains("disabled")) return;
+    ev.stopPropagation();
+    const provider = el.dataset.provider, model = el.dataset.model;
+    try {
+      await api.post("/core", { provider, model });
+      updateCoreBtn(provider, model);
+      menu.classList.add("hidden");
+      updateProviderBadge(await api.get("/status"));
+      addMsg("zax", `Core switched: ${provider} · ${model}. Everything the team and I do now runs on it, Founder.`);
+    } catch (e) {
+      addMsg("zax", `Couldn't switch the core: ${e.message || e}`);
+    }
+  });
+  document.addEventListener("click", (ev) => {
+    if (!menu.classList.contains("hidden") && !menu.contains(ev.target) && ev.target !== btn) {
+      menu.classList.add("hidden");
+    }
+  });
+}
+
 async function boot() {
   $("#boot").classList.add("fade");
   setTimeout(() => $("#boot").remove(), 1000);
@@ -1208,6 +1277,7 @@ async function boot() {
 
   const status = await api.get("/status");
   updateProviderBadge(status);
+  initCorePicker();
   $("#org-founder").textContent = status.founder.toUpperCase();
 
   await renderSessions();

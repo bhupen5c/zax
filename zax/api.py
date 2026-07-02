@@ -122,6 +122,25 @@ async def providers():
     return llm.provider_overview()
 
 
+class CoreSetIn(BaseModel):
+    provider: str = Field(min_length=1, max_length=40)
+    model: str = Field(default="", max_length=120)
+
+
+@router.post("/core")
+async def set_core(body: CoreSetIn):
+    """One-call core switch for the chat dropdown: provider + optional model."""
+    pid = body.provider.strip().lower()
+    if pid not in llm.PROVIDERS:
+        raise HTTPException(404, "Unknown provider")
+    if not llm.is_configured(pid):
+        raise HTTPException(400, f"{llm.PROVIDERS[pid]['label']} has no API key configured")
+    eff = llm.set_core(pid, body.model)
+    db.log_event("config", "founder",
+                 f"The Founder switched the core to {llm.PROVIDERS[pid]['label']} · {eff}")
+    return {"ok": True, "provider": pid, "model": eff}
+
+
 @router.post("/providers/select")
 async def select_provider(body: ProviderSelectIn):
     if body.provider not in llm.PROVIDERS:
