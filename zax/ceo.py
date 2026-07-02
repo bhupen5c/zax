@@ -6,6 +6,7 @@ LLM persona, fused with the Odysseus side (chat + memory + tools) in agents.py.
 import asyncio
 import json
 import random
+import re
 import time
 from pathlib import Path
 
@@ -109,7 +110,9 @@ async def chat(founder_message: str, session_id: str = "main") -> dict:
     while history and history[0]["role"] != "user":
         history.pop(0)
     try:
-        text, tokens = await llm.chat(system, history)
+        # Generous cap: reasoning models (deepseek-v4-pro) spend hidden thinking tokens
+        # from this same budget — 1500 can truncate the visible reply mid-action-block.
+        text, tokens = await llm.chat(system, history, max_tokens=3000)
     except Exception as exc:
         text = (f"Founder, my intelligence core is offline: {str(exc)[:250]} — "
                 "open Settings → Intelligence Core to fix it or switch providers.")
@@ -150,7 +153,59 @@ def _execute_actions(text: str) -> tuple[str, list[dict]]:
         except Exception as exc:
             note = f"(action failed: {type(exc).__name__})"
         out = out[:start] + note + out[end + len("</action>"):]
+
+    # Salvage a bare action JSON the model emitted WITHOUT <action> tags (models drop
+    # the wrapper sometimes, and reasoning models can truncate it) — otherwise the raw
+    # blob leaks into chat and the Founder's ask silently goes nowhere.
+    m = _BARE_ACTION_RE.search(out)
+    if m:
+        end = _find_json_end(out, m.start())
+        seg = out[m.start(): end if end != -1 else len(out)]
+        act = llm.extract_json(seg) or {}
+        if not act.get("type") and m.group(1) == "create_task":
+            # Truncated mid-JSON — salvage the essentials so the work still happens.
+            t = re.search(r'"title"\s*:\s*"([^"]+)"', seg)
+            d = re.search(r'"description"\s*:\s*"([^"]*)', seg)
+            if t:
+                act = {"type": "create_task", "title": t.group(1),
+                       "description": d.group(1).replace("\\n", "\n") if d else ""}
+        if act.get("type"):
+            try:
+                note = _run_action(act)
+                actions.append(act)
+            except Exception as exc:
+                note = f"(action failed: {type(exc).__name__})"
+        else:
+            note = ""  # unusable fragment — at least don't show raw JSON to the Founder
+        out = out[:m.start()] + note + (out[end:] if end != -1 else "")
     return out.strip(), actions
+
+
+_BARE_ACTION_RE = re.compile(r'\{\s*"type"\s*:\s*"(create_task|hire|fire)"')
+
+
+def _find_json_end(s: str, start: int) -> int:
+    """Index just past the brace-balanced JSON object starting at `start` (string-aware),
+    or -1 if it never closes (truncated output)."""
+    depth, in_str, esc = 0, False, False
+    for i in range(start, len(s)):
+        c = s[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+    return -1
 
 
 def _run_action(act: dict) -> str:
