@@ -542,6 +542,10 @@ button:disabled {
   border: 1px solid var(--glass-border);
   border-radius: var(--radius);
   backdrop-filter: blur(8px);
+  /* backdrop-filter makes this a stacking context; without an explicit z-index the
+     later-in-DOM chat log paints over it and swallows the core-picker dropdown. */
+  position: relative;
+  z-index: 10;
 }
 
 #orb {
