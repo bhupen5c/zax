@@ -1,7 +1,7 @@
 """HTTP API — thin glue over ceo/db/voice. The UI in static/ is the only client."""
 import time
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from . import ceo, config, db, graph, learning, llm, pipeline, skills, telegram, voice
@@ -144,6 +144,25 @@ async def configure_provider(body: ProviderConfigIn):
         db.set_setting("provider.custom.base_url", body.base_url.strip())
     db.log_event("config", "founder", f"The Founder updated {body.provider} configuration")
     return {"ok": True, "configured": llm.is_configured(body.provider)}
+
+
+@router.post("/tools/tavily")
+async def configure_tavily(request: Request):
+    """Set (or clear) the Tavily search key. Accepts JSON regardless of content-type so
+    a browser can post it cross-origin as a CORS 'simple request' (no preflight) — the
+    key travels page -> localhost -> settings DB without transiting any third party."""
+    import json as _json
+    try:
+        body = _json.loads((await request.body()) or b"{}")
+    except ValueError:
+        raise HTTPException(400, "Body must be JSON")
+    key = str(body.get("api_key", "")).strip()
+    if key and not key.startswith("tvly-"):
+        raise HTTPException(400, "Not a Tavily key (must start with tvly-)")
+    db.set_setting("tools.tavily_api_key", key)
+    db.log_event("config", "founder",
+                 "The Founder " + ("configured" if key else "cleared") + " Tavily web search")
+    return {"ok": True, "tavily": bool(key)}
 
 
 @router.post("/providers/test")
