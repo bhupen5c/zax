@@ -119,7 +119,22 @@ async def feed(after: int = 0):
 
 @router.get("/providers")
 async def providers():
-    return llm.provider_overview()
+    out = llm.provider_overview()
+    # Ollama's catalogue is whatever is pulled locally — ask it live (fast timeout) so
+    # the core dropdown offers the real tags (e.g. gemma4:12b-mlx), not a stale default
+    # that 404s when selected.
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=1.5) as c:
+            r = await c.get(f"{llm.base_url('ollama')}/api/tags")
+            tags = [m["name"] for m in r.json().get("models", [])]
+        if tags:
+            for p in out:
+                if p["id"] == "ollama":
+                    p["models"] = tags
+    except Exception:
+        pass  # ollama not running — keep the static entry
+    return out
 
 
 class CoreSetIn(BaseModel):
