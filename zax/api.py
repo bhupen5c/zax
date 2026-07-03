@@ -151,6 +151,11 @@ async def set_core(body: CoreSetIn):
     if not llm.is_configured(pid):
         raise HTTPException(400, f"{llm.PROVIDERS[pid]['label']} has no API key configured")
     eff = llm.set_core(pid, body.model)
+    # A fresh core deserves a clean slate: the breaker/error banner belonged to the
+    # OLD core — clearing it stops "⚠ CORE ERROR" lingering after a switch — and the
+    # kick retries any stalled work on the new brain immediately.
+    pipeline._clear_backoff()
+    pipeline.kick("core switched")
     db.log_event("config", "founder",
                  f"The Founder switched the core to {llm.PROVIDERS[pid]['label']} · {eff}")
     return {"ok": True, "provider": pid, "model": eff}

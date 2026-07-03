@@ -242,6 +242,9 @@ def _run_action(act: dict) -> str:
                 return (f"({spec['label']} has no reasoning tiers registered — "
                         f"name a specific model instead)")
         eff = llm.set_core(pid, model)
+        from . import pipeline
+        pipeline._clear_backoff()   # old core's error state doesn't belong to the new one
+        pipeline.kick("core switched")
         db.log_event("config", "zax", f"Zax switched the core to {spec['label']} · {eff}")
         return f"✓ Core switched: {spec['label']} · {eff} — effective immediately, org-wide."
     if kind == "fire":

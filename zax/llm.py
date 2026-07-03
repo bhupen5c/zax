@@ -595,6 +595,9 @@ async def _ollama(system: str, messages: list[dict], model: str) -> tuple[str, i
             "model": model,
             "stream": False,
             "messages": [{"role": "system", "content": system}, *messages],
+            # Ollama defaults to a tiny context (2-4k); Zax's agent prompts (persona +
+            # rules + memory + task) overflow it and some backends 500 outright.
+            "options": {"num_ctx": 8192},
         },
     )
     r.raise_for_status()
