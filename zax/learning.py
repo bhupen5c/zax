@@ -56,7 +56,7 @@ async def learn_from_review(task: dict, agent: dict, score: int, feedback: str) 
         f"AGENT: {agent['name']} ({agent['role']})\nSCORE: {score}/100\n"
         f"CEO FEEDBACK: {feedback}\nDELIVERABLE EXCERPT:\n{(task['result'] or '')[:1500]}"
     )
-    text, _ = await llm.chat(system, [{"role": "user", "content": brief}], max_tokens=200)
+    text, _ = await llm.chat(system, [{"role": "user", "content": brief}], max_tokens=900)
     parsed = llm.extract_json(text) or {}
     content = str(parsed.get("text", "")).strip()
     if not content or len(content) < 15:
@@ -115,7 +115,7 @@ async def daily_reflection(force: bool = False) -> dict:
     )
 
     text, _ = await llm.chat(_prompt("reflect.txt"),
-                             [{"role": "user", "content": brief}], max_tokens=700)
+                             [{"role": "user", "content": brief}], max_tokens=1600)
     parsed = llm.extract_json(text) or {}
     report = str(parsed.get("report", "")).strip()
     lessons = [str(x).strip() for x in (parsed.get("lessons") or []) if str(x).strip()]

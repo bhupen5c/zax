@@ -295,7 +295,7 @@ async def _llm_extract(text: str) -> tuple[list[dict], list[dict]]:
     if not system:
         return _fallback_extract(text)
     try:
-        out, _ = await llm.chat(system, [{"role": "user", "content": text[:4000]}], max_tokens=600)
+        out, _ = await llm.chat(system, [{"role": "user", "content": text[:4000]}], max_tokens=1500)
         parsed = llm.extract_json(out) or {}
         nodes = parsed.get("entities") or []
         edges = parsed.get("relationships") or []

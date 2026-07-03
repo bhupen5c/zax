@@ -96,7 +96,7 @@ async def execute_task(agent: dict, task: dict) -> None:
         for step in range(config.MAX_TOOL_STEPS):
             # progress climbs 15→80 across the tool loop; visible to the board's poll
             db.set_progress(task["id"], 15 + int((step + 0.5) / config.MAX_TOOL_STEPS * 65))
-            text, tokens = await llm.chat(system, messages, model=agent["model"], max_tokens=2000)
+            text, tokens = await llm.chat(system, messages, model=agent["model"], max_tokens=4000)
             total_tokens += tokens
             parsed = llm.extract_json(text)
             if parsed and parsed.get("tool"):
@@ -128,7 +128,7 @@ async def execute_task(agent: dict, task: dict) -> None:
                 "You have used your entire tool budget. Do NOT request any more tools. Using "
                 "everything gathered above, write your COMPLETE final deliverable now, as "
                 '{"final": "<the full answer>"}.'})
-            text, tokens = await llm.chat(system, messages, model=agent["model"], max_tokens=2000)
+            text, tokens = await llm.chat(system, messages, model=agent["model"], max_tokens=4000)
             total_tokens += tokens
             result = _deliverable(text)
 

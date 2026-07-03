@@ -309,7 +309,7 @@ async def review_task(task: dict) -> None:
         f"TASK: {task['title']}\nDESCRIPTION: {task['description']}\n\n"
         f"DELIVERABLE FROM {agent['name'] if agent else 'agent'}:\n{(task['result'] or '')[:6000]}"
     )
-    text, tokens = await llm.chat(system, [{"role": "user", "content": brief}], max_tokens=300)
+    text, tokens = await llm.chat(system, [{"role": "user", "content": brief}], max_tokens=1200)
     parsed = llm.extract_json(text) or {}
     try:
         score = max(0, min(100, int(float(parsed.get("score", 40)))))
@@ -359,7 +359,7 @@ async def hire_with_llm(need: str) -> dict:
     staff = ", ".join(f"{a['name']} ({a['role']})" for a in db.active_agents()) or "nobody"
     system = _prompt("hire.txt").replace("{need}", need).replace("{staff}", staff)
     try:
-        text, _ = await llm.chat(system, [{"role": "user", "content": f"Hiring brief for: {need}"}], max_tokens=400)
+        text, _ = await llm.chat(system, [{"role": "user", "content": f"Hiring brief for: {need}"}], max_tokens=1200)
         spec = llm.extract_json(text) or {}
         taken = {a["name"] for a in db.all_agents()}
         name = str(spec.get("name", "")).strip().title() or "Nova"
