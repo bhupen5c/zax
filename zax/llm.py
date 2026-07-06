@@ -587,8 +587,28 @@ async def _openai_compat(pid: str, system: str, messages: list[dict],
 
 # ------------------------------------------------ ollama (local)
 
+async def _resolve_ollama_tag(model: str) -> str:
+    """Map a bare model name to the locally pulled tag ('ornith' -> 'ornith:9b').
+    Ollama only resolves bare names to ':latest', so anything pulled under a custom
+    tag 404s when set by hand or via chat. Best-effort: unknown names pass through."""
+    if ":" in model:
+        return model
+    try:
+        r = await _get_client().get(f"{base_url('ollama')}/api/tags")
+        tags = [m["name"] for m in r.json().get("models", [])]
+        if model in tags:
+            return model
+        for t in tags:
+            if t.split(":")[0] == model:
+                return t
+    except Exception:
+        pass
+    return model
+
+
 async def _ollama(system: str, messages: list[dict], model: str) -> tuple[str, int]:
     client = _get_client()
+    model = await _resolve_ollama_tag(model)
     r = await client.post(
         f"{base_url('ollama')}/api/chat",
         json={
