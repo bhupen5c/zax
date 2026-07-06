@@ -3,7 +3,7 @@ tool loop (search, fetch, files, memory) and returns a deliverable for Zax to re
 import json
 import re
 
-from . import config, db, llm, memory, tools
+from . import config, db, learning, llm, memory, tools
 
 
 # Shared output discipline injected into EVERY agent (specialist or generic). This is
@@ -55,6 +55,69 @@ def _deliverable(text: str) -> str:
             s = s.replace(a, b)
         return s.strip()
     return text.strip()
+
+
+def _verify_core() -> tuple[str, str]:
+    """(provider, model) for the self-check critic — `verify.core` setting as
+    "provider/model" (e.g. "ollama/ornith:9b" = free local checker). Empty → active core."""
+    raw = db.get_setting("verify.core", "").strip()
+    if "/" in raw:
+        pid, model = raw.split("/", 1)
+        if pid in llm.PROVIDERS and llm.is_configured(pid):
+            return pid, model
+    return "", ""
+
+
+async def _self_check(agent: dict, task: dict, result: str) -> list[str]:
+    """Adversarially check a deliverable BEFORE it ships (the 'verify your work'
+    half of the loop). Returns concrete issues, or [] for pass. Never raises —
+    a broken critic must not block delivery."""
+    pid, model = _verify_core()
+    system = (
+        "You are a ruthless QA checker. You receive a TASK and a DELIVERABLE. "
+        "Verify, in order: (1) every explicit constraint is obeyed exactly — line counts, "
+        "item counts, word limits, requested sections/parts; (2) correctness — arithmetic, "
+        "code (would it run? does it do what's claimed?), factual claims; (3) completeness — "
+        "nothing the task asked for is missing; (4) no invented statistics, URLs or sources. "
+        "Be strict but fair: only flag REAL defects, never style preferences. "
+        'Reply with ONLY one JSON object: {"verdict": "pass"} if the deliverable ships as-is, '
+        'or {"verdict": "fix", "issues": ["<defect 1>", "<defect 2>"]} (max 3, each one '
+        "sentence, concrete and actionable)."
+    )
+    user = (f"TASK: {task['title']}\nDETAILS: {task['description'] or '(none)'}\n\n"
+            f"DELIVERABLE:\n{result[:8000]}")
+    try:
+        text, _ = await llm.chat(system, [{"role": "user", "content": user}],
+                                 model=model, max_tokens=800, provider=pid)
+        verdict = llm.extract_json(text) or {}
+        if str(verdict.get("verdict", "")).lower() == "fix":
+            issues = [str(i).strip() for i in (verdict.get("issues") or []) if str(i).strip()]
+            return issues[:3]
+    except Exception as exc:
+        db.log_event("check", agent["name"],
+                     f"self-check unavailable ({str(exc)[:80]}) — shipping unchecked")
+    return []
+
+
+async def _revise(agent: dict, task: dict, result: str, issues: list[str]) -> str:
+    """One revision pass fixing the checker's findings. Falls back to the original
+    deliverable on any failure — revision must never lose finished work."""
+    system = f"{agent['persona']}\n\n{OUTPUT_RULES}"
+    user = (f"TASK: {task['title']}\nDETAILS: {task['description'] or '(none)'}\n\n"
+            f"YOUR DRAFT:\n{result[:8000]}\n\n"
+            "A reviewer found these defects:\n"
+            + "\n".join(f"- {i}" for i in issues)
+            + "\n\nProduce the corrected COMPLETE deliverable now — the full artifact with the "
+              "defects fixed, nothing else. Do not mention the review or the changes.")
+    try:
+        text, _ = await llm.chat(system, [{"role": "user", "content": user}],
+                                 model=agent["model"], max_tokens=4000)
+        revised = _deliverable(text)
+        if revised.strip() and not _is_leaked_tool_call(revised):
+            return revised.strip()
+    except Exception as exc:
+        db.log_event("check", agent["name"], f"revision failed ({str(exc)[:80]}) — keeping draft")
+    return result
 
 
 def _is_leaked_tool_call(s: str) -> bool:
@@ -136,6 +199,23 @@ async def execute_task(agent: dict, task: dict) -> None:
         # (raising routes to the except below) rather than save a blank ticket.
         if not result.strip():
             raise RuntimeError("agent produced an empty deliverable")
+
+        # Autonomous verify-before-deliver loop (Claude-style): an adversarial
+        # checker inspects the draft; real defects trigger ONE revision pass, and
+        # each finding is stored as an agent-scoped lesson so the whole org stops
+        # repeating the mistake (memory.recall_context injects it next run).
+        if config.SELF_CHECK:
+            db.set_progress(task["id"], 84)
+            issues = await _self_check(agent, task, result)
+            if issues:
+                db.log_event("check", agent["name"],
+                             f"self-check flagged {len(issues)} issue(s) on “{task['title'][:60]}” — revising")
+                db.set_progress(task["id"], 87)
+                result = await _revise(agent, task, result, issues)
+                learning.remember_check_lesson(agent, task, issues)
+            else:
+                db.log_event("check", agent["name"],
+                             f"self-check passed “{task['title'][:60]}” — shipping")
         # Compare-and-set: only commit if this ticket is still ours and in_progress.
         # If it was reassigned mid-run (e.g. the agent was fired), discard the
         # duplicate result rather than orphan it. progress 90 = awaiting review.

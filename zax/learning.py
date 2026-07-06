@@ -43,6 +43,20 @@ def _remember(content: str, *, kind: str, agent: str = "", importance: float = 1
     graph.schedule_memory(mem_id, content, kind)
 
 
+def remember_check_lesson(agent: dict, task: dict, issues: list[str]) -> None:
+    """Turn self-check findings into an agent-scoped lesson — the 'learn' half of the
+    verify loop. Recalled into the agent's prompt on future tasks, so the same class
+    of defect stops recurring across the org."""
+    summary = "; ".join(issues)[:400]
+    _remember(
+        f"Self-check lesson ({task['title'][:60]}): my draft was flagged for — {summary}. "
+        f"Check for this BEFORE finishing future deliverables.",
+        kind="lesson", agent=agent["name"], importance=1.8,
+    )
+    db.log_event("learn", agent["name"],
+                 f"{agent['name']} learned from self-check: {summary[:100]}")
+
+
 # ---------------------------------------------------------------- per-review
 
 async def learn_from_review(task: dict, agent: dict, score: int, feedback: str) -> None:

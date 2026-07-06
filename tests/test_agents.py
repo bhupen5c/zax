@@ -41,7 +41,9 @@ async def test_execute_tool_loop(monkeypatch):
         calls["n"] += 1
         if calls["n"] == 1:
             return (json.dumps({"tool": "remember", "args": {"note": "a fact"}}), 5)
-        return (json.dumps({"final": "Done after using a tool."}), 5)
+        if calls["n"] == 2:
+            return (json.dumps({"final": "Done after using a tool."}), 5)
+        return (json.dumps({"verdict": "pass"}), 5)  # self-check approves
     monkeypatch.setattr(llm, "chat", tool_then_final)
     a = _agent()
     t = db.create_task("Use a tool then answer")
@@ -49,9 +51,33 @@ async def test_execute_tool_loop(monkeypatch):
     await agents.execute_task(a, db.get_task(t["id"]))
     cur = db.get_task(t["id"])
     assert "Done after using a tool" in cur["result"]
-    assert calls["n"] == 2  # one tool call + one final
+    assert calls["n"] == 3  # one tool call + one final + one self-check
     # the remembered fact made it into company memory
     assert any("a fact" in m["content"] for m in db.list_memories())
+
+
+async def test_self_check_revises_flagged_deliverable(monkeypatch):
+    """The verify-before-deliver loop: checker flags a defect, ONE revision pass
+    fixes it, and the finding is stored as an agent-scoped lesson."""
+    calls = {"n": 0}
+
+    async def draft_check_revise(system, messages, **k):
+        calls["n"] += 1
+        if calls["n"] == 1:   # agent's draft
+            return (json.dumps({"final": "Draft with a defect."}), 5)
+        if calls["n"] == 2:   # checker flags it
+            return (json.dumps({"verdict": "fix", "issues": ["missing the requested table"]}), 5)
+        return (json.dumps({"final": "Revised deliverable with the table."}), 5)
+    monkeypatch.setattr(llm, "chat", draft_check_revise)
+    a = _agent()
+    t = db.create_task("Compare 3 options in a table")
+    db.update_task(t["id"], status="in_progress", agent_id=a["id"])
+    await agents.execute_task(a, db.get_task(t["id"]))
+    cur = db.get_task(t["id"])
+    assert "Revised deliverable" in cur["result"]
+    assert calls["n"] == 3  # draft + check + revision
+    # the defect became an agent-scoped lesson for future tasks
+    assert any("missing the requested table" in m["content"] for m in db.list_memories())
 
 
 async def test_tool_budget_exhaustion_forces_synthesis(monkeypatch):
