@@ -28,7 +28,8 @@ def _get_client() -> httpx.AsyncClient:
     return _shared_client
 
 
-TOOL_SPECS = """You may use tools. To call one, respond with ONLY a JSON object:
+TOOL_SPECS = """You are an OPERATOR, not just a writer: DO the task with tools, don't
+merely describe how it could be done. To call a tool, respond with ONLY a JSON object:
   {"tool": "<name>", "args": {...}}
 Available tools:
   web_search   {"query": str}          -> top web results (title, url, snippet)
@@ -36,13 +37,19 @@ Available tools:
   write_file   {"path": str, "content": str} -> save a file in your workspace
   read_file    {"path": str}           -> read a file from your workspace
   list_files   {"path": str}           -> list files in your workspace
-  run_code     {"code": str}           -> run Python in an isolated process (opt-in; stdout returned)
-  shell        {"command": str}        -> run a shell command in the workspace (opt-in)
+  run_code     {"code": str}           -> execute Python (isolated process, stdout/errors returned)
+  shell        {"command": str}        -> run a shell command in the workspace
   remember     {"note": str}           -> store a fact in company memory
-Tools are OPTIONAL — many tasks need none; if you can answer directly, just do.
-You have a small, limited tool budget, so use it sparingly (one or two searches/
-fetches is usually plenty) and synthesize from what you gather.
-When you are finished, respond with ONLY: {"final": "<your complete deliverable>"}"""
+
+HOW TO WORK (this is what separates you from a chatbot):
+- Wrote code? RUN it with run_code and confirm the output is correct BEFORE you deliver.
+  If it errors, read the traceback, fix it, and run again — iterate until it works.
+- Doing analysis/math? Compute it with run_code, don't eyeball it.
+- Researching? web_search, then fetch_url the primary sources; cite what you actually read.
+- Producing a file/artifact? write_file it, then read_file/run it to verify it's real.
+Use as many tool calls as the task genuinely needs — a verified result beats a fast guess.
+Only skip tools for tasks that truly need none (a short email, a judgement call).
+When the work is DONE and CHECKED, respond with ONLY: {"final": "<your complete deliverable>"}"""
 
 
 def _strip_tags(raw: str) -> str:

@@ -34,7 +34,7 @@ ZAX_MODEL = os.environ.get("ZAX_MODEL", "")  # blank = provider default
 
 # Heartbeat / org policy (the Paperclip side)
 HEARTBEAT_SECONDS = int(os.environ.get("ZAX_HEARTBEAT_SECONDS", "20"))
-MAX_TOOL_STEPS = int(os.environ.get("ZAX_MAX_TOOL_STEPS", "7"))
+MAX_TOOL_STEPS = int(os.environ.get("ZAX_MAX_TOOL_STEPS", "10"))
 # Claude-style autonomous loop: every deliverable is adversarially self-checked (and
 # revised once if issues are found) BEFORE it reaches review. The checker runs on the
 # core named by the `verify.core` setting ("provider/model", e.g. "ollama/ornith:9b"
@@ -51,12 +51,14 @@ MIN_TASKS_BEFORE_FIRE = int(os.environ.get("ZAX_MIN_TASKS_BEFORE_FIRE", "3"))
 HIRE_BACKLOG_PER_AGENT = int(os.environ.get("ZAX_HIRE_BACKLOG_PER_AGENT", "3"))
 DEFAULT_TOKEN_BUDGET = int(os.environ.get("ZAX_DEFAULT_TOKEN_BUDGET", "250000"))
 
-# Agent tools (the Odysseus side). Code/shell execution run real commands on the
-# Founder's machine — and agents can be prompt-injected via fetched web content —
-# so they are OFF by default and opt-in per their env flag.
+# Agent tools (the Odysseus side). This is what makes agents OPERATORS, not just
+# writers: run_code lets them execute and VERIFY their work before delivering.
+# It runs in an isolated Python subprocess (`-I`), workspace cwd, restricted env,
+# hard timeout — process isolation, not a security sandbox, but scoped enough to be
+# on by default. SHELL is arbitrary (`rm -rf` has no allowlist) so it stays opt-in.
+ALLOW_CODE = os.environ.get("ZAX_ALLOW_CODE", "1") == "1"
 ALLOW_SHELL = os.environ.get("ZAX_ALLOW_SHELL", "0") == "1"
-ALLOW_CODE = os.environ.get("ZAX_ALLOW_CODE", "0") == "1"
-CODE_TIMEOUT = int(os.environ.get("ZAX_CODE_TIMEOUT", "20"))
+CODE_TIMEOUT = int(os.environ.get("ZAX_CODE_TIMEOUT", "30"))
 
 # Zax voice. Engine + voice are chosen at runtime in Settings (stored in SQLite);
 # these are only fallbacks. Premium ElevenLabs key can also come from the env.

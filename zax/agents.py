@@ -169,8 +169,10 @@ async def execute_task(agent: dict, task: dict) -> None:
                 db.log_event("tool", agent["name"],
                              f"{agent['name']} used {tool_name}({json.dumps(args)[:120]})")
                 steps_left = config.MAX_TOOL_STEPS - step - 1
-                budget = (f"\n\n({steps_left} tool call{'s' if steps_left != 1 else ''} left — "
-                          "gather only what you still need, then give your {\"final\": ...} answer.)"
+                budget = (f"\n\n({steps_left} tool call{'s' if steps_left != 1 else ''} left. "
+                          "Keep working: if this result shows an error or something unverified, "
+                          "fix it and run again; otherwise finish. Give {\"final\": ...} only when "
+                          "the work is done and checked.)"
                           if steps_left else
                           "\n\n(That was your last tool call. Give your {\"final\": ...} answer now.)")
                 messages.append({"role": "assistant", "content": text})
