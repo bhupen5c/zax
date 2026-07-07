@@ -67,6 +67,14 @@ ALLOW_CODE = os.environ.get("ZAX_ALLOW_CODE", "1") == "1"
 # Let agents hand whole tasks to external agent apps installed on this machine
 # (Hermes, opencode) and use their result — "control my projects with other agents".
 ALLOW_EXTERNAL_AGENTS = os.environ.get("ZAX_ALLOW_EXTERNAL_AGENTS", "1") == "1"
+
+# Self-update: Zax can propose a code change to its OWN source, in an isolated git
+# worktree, and only ever ships it if (a) the full test suite passes there and
+# (b) the Founder explicitly approves via the same Approve/Deny gate as shell/code —
+# nothing merges into main or restarts the live app without both.
+ALLOW_SELF_UPDATE = os.environ.get("ZAX_ALLOW_SELF_UPDATE", "1") == "1"
+SELF_UPDATE_MAX_STEPS = int(os.environ.get("ZAX_SELF_UPDATE_MAX_STEPS", "14"))
+SELF_UPDATE_TEST_TIMEOUT = int(os.environ.get("ZAX_SELF_UPDATE_TEST_TIMEOUT", "180"))
 # Shell is ON, but a command approval gate (tools.py) holds anything not on a tight
 # read-only allowlist for the Founder to Approve/Deny — so `ls` runs but `rm -rf`
 # waits. Set ZAX_ALLOW_SHELL=0 to disable shell entirely.

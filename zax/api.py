@@ -224,10 +224,20 @@ async def resolve_approval(aid: int, body: ApprovalIn):
         raise HTTPException(404, "No such pending approval")
     if body.decision == "deny":
         db.resolve_approval(aid, "denied")
+        if a["tool"] == "self_update":
+            import json as _json
+            from . import selfupdate
+            branch = _json.loads(a.get("meta") or "{}").get("branch", "")
+            if branch:
+                await selfupdate._git("branch", "-D", branch, cwd=config.ROOT)
         db.log_event("approval", "founder", f"The Founder DENIED {a['tool']}: {a['command'][:100]}")
         return {"ok": True, "status": "denied"}
     # Approve → actually run the held command now, capture output.
-    out = await tools.run_approved(a["tool"], a["command"])
+    if a["tool"] == "self_update":
+        from . import selfupdate
+        out = await selfupdate.apply_approved(a)
+    else:
+        out = await tools.run_approved(a["tool"], a["command"])
     db.resolve_approval(aid, "approved", out)
     db.log_event("approval", "founder",
                  f"The Founder APPROVED and ran {a['tool']}: {a['command'][:100]}")

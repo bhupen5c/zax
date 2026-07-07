@@ -175,6 +175,7 @@ CREATE TABLE IF NOT EXISTS approvals (
     reason TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pending',
     output TEXT NOT NULL DEFAULT '',
+    meta TEXT NOT NULL DEFAULT '',       -- JSON sidecar (e.g. {"branch": "self-update/..."})
     created REAL NOT NULL,
     resolved REAL NOT NULL DEFAULT 0
 );
@@ -252,6 +253,7 @@ CREATE TABLE IF NOT EXISTS approvals (
     task_id TEXT NOT NULL DEFAULT '', task_title TEXT NOT NULL DEFAULT '',
     tool TEXT NOT NULL, command TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pending', output TEXT NOT NULL DEFAULT '',
+    meta TEXT NOT NULL DEFAULT '',
     created DOUBLE PRECISION NOT NULL, resolved DOUBLE PRECISION NOT NULL DEFAULT 0
 );
 """
@@ -308,6 +310,10 @@ def connect():
         if "project_id" not in tcols:
             _conn.execute("ALTER TABLE tasks ADD COLUMN project_id TEXT NOT NULL DEFAULT ''")
             _conn.execute("ALTER TABLE tasks ADD COLUMN deps TEXT NOT NULL DEFAULT ''")
+        # add the meta sidecar to pre-existing approvals tables (self-update branch name)
+        apcols = {r["name"] for r in _conn.execute("PRAGMA table_info(approvals)")}
+        if apcols and "meta" not in apcols:
+            _conn.execute("ALTER TABLE approvals ADD COLUMN meta TEXT NOT NULL DEFAULT ''")
         # add per-session chat: session_id on messages + a default 'main' session
         mcols = {r["name"] for r in _conn.execute("PRAGMA table_info(messages)")}
         if "session_id" not in mcols:
@@ -653,11 +659,11 @@ def remember(content: str, kind: str = "note", agent: str = "", importance: floa
 # ---------------------------------------------------------------- approvals (command gate)
 
 def add_approval(agent: str, task_id: str, task_title: str, tool: str,
-                 command: str, reason: str) -> int:
+                 command: str, reason: str, meta: str = "") -> int:
     return _insert_returning_id(
-        "INSERT INTO approvals (agent, task_id, task_title, tool, command, reason, created) "
-        "VALUES (?,?,?,?,?,?,?)",
-        (agent, task_id, task_title, tool, command, reason, time.time()))
+        "INSERT INTO approvals (agent, task_id, task_title, tool, command, reason, meta, created) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (agent, task_id, task_title, tool, command, reason, meta, time.time()))
 
 
 def pending_approvals() -> list[dict]:

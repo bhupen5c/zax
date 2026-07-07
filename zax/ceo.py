@@ -221,8 +221,29 @@ async def _plan_project_bg(goal: str) -> None:
         db.log_event("error", "project", f"Project planning failed: {str(exc)[:160]}")
 
 
+async def _self_update_bg(goal: str) -> None:
+    """Propose+test a self-code-change off the chat thread. Approval (if it passes
+    tests) surfaces in the Bridge's Approve/Deny bar — merging is a Founder decision."""
+    from . import selfupdate
+    try:
+        result = await selfupdate.propose_and_test(goal, requester="zax")
+        if not result.get("ok"):
+            db.log_event("selfupdate", "zax",
+                         f"Self-update for “{goal[:60]}” didn't ship: {result.get('error', '')[:150]}")
+    except Exception as exc:
+        db.log_event("error", "selfupdate", f"Self-update failed: {str(exc)[:160]}")
+
+
 def _run_action(act: dict) -> str:
     kind = act.get("type")
+    if kind == "self_update":
+        goal = str(act.get("goal", "")).strip()
+        if not goal:
+            return "(no goal given for the self-update)"
+        asyncio.create_task(_self_update_bg(goal))
+        return (f"✓ On it — writing the change for “{goal[:60]}” in an isolated branch now. "
+                f"If it passes the full test suite I'll bring it to you for approval before "
+                f"anything merges or restarts.")
     if kind == "start_project":
         goal = str(act.get("goal", "")).strip()
         if not goal:
