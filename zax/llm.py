@@ -168,7 +168,9 @@ PROVIDERS: dict[str, dict] = {
         "kind": "openai",
         "env": "MOONSHOT_API_KEY",
         "base": "https://api.moonshot.ai/v1",
-        "default_model": "moonshot-v1-8k",
+        "default_model": "kimi-k2.6",
+        "models": ["kimi-k2.7-code", "kimi-k2.6", "kimi-k2.5", "moonshot-v1-128k", "moonshot-v1-32k"],
+        "tiers": {"deep": "kimi-k2.6", "fast": "moonshot-v1-32k"},
         "desc": "Moonshot AI (Kimi) models via API key.",
     },
     "mock": {
