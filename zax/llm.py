@@ -179,8 +179,8 @@ PROVIDERS: dict[str, dict] = {
         "env": "GLM_API_KEY",
         "base": "https://api.z.ai/api/paas/v4",
         "default_model": "glm-5.2",
-        "models": ["glm-5.2", "glm-5", "glm-4.6"],
-        "tiers": {"deep": "glm-5.2", "fast": "glm-4.6"},
+        "models": ["glm-5.2", "glm-5.1", "glm-5", "glm-5-turbo", "glm-4.7", "glm-4.6", "glm-4.5-air"],
+        "tiers": {"deep": "glm-5.2", "fast": "glm-5-turbo"},
         "desc": "Zhipu AI's GLM models via Z.ai's international API.",
     },
     "mock": {
