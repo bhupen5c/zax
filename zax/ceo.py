@@ -221,16 +221,33 @@ async def _plan_project_bg(goal: str) -> None:
         db.log_event("error", "project", f"Project planning failed: {str(exc)[:160]}")
 
 
-async def _self_update_bg(goal: str) -> None:
-    """Propose+test a self-code-change off the chat thread. Approval (if it passes
-    tests) surfaces in the Bridge's Approve/Deny bar — merging is a Founder decision."""
+async def _self_update_bg(goal: str, session_id: str = "main") -> None:
+    """Propose+test a self-code-change off the chat thread. On success the approval
+    surfaces in the Bridge's Approve/Deny bar; on any failure/bounce a plain-English
+    message is posted to chat so the Founder never sees 'nothing happened'."""
     from . import selfupdate
     try:
         result = await selfupdate.propose_and_test(goal, requester="zax")
-        if not result.get("ok"):
-            db.log_event("selfupdate", "zax",
-                         f"Self-update for “{goal[:60]}” didn't ship: {result.get('error', '')[:150]}")
+        if result.get("ok"):
+            return  # approval bar + event log already announce success
+        err = result.get("error", "")
+        if result.get("busy"):
+            msg = (f"I couldn't start that self-update — one is already running "
+                   f"(“{result.get('current_goal', '')[:60]}”). It'll land in the approval bar shortly; "
+                   f"send this again after, Founder.")
+        elif "no code change" in err:
+            msg = (f"I looked at “{goal[:60]}” but didn't end up changing any code — either it's "
+                   f"already how you want it, or the goal needs to be more specific. Tell me the exact "
+                   f"behavior to change and I'll try again.")
+        elif "tests failed" in err:
+            msg = (f"I wrote the change for “{goal[:60]}”, but it broke my own test suite, so I threw "
+                   f"it away rather than ship something broken. Want me to try a different approach?")
+        else:
+            msg = f"That self-update didn't ship: {err[:160]}"
+        db.add_message("zax", msg, session_id)
+        db.log_event("selfupdate", "zax", f"Self-update for “{goal[:50]}” didn't ship: {err[:120]}")
     except Exception as exc:
+        db.add_message("zax", f"The self-update hit an error: {str(exc)[:160]}", session_id)
         db.log_event("error", "selfupdate", f"Self-update failed: {str(exc)[:160]}")
 
 

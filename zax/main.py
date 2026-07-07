@@ -53,6 +53,8 @@ async def lifespan(app: FastAPI):
                    (pack["key"], pack["name"]))
         db.execute("UPDATE agents SET persona=? WHERE skill=? AND persona != ?",
                    (pack["persona"], pack["key"], pack["persona"]))
+    from . import selfupdate
+    selfupdate.recover()  # prune any self-update worktree/branch stranded by a crash/restart
     heartbeat.start()
     telegram.start()  # no-op unless a bot token is configured
     # A public bind with no password + code/shell enabled = anyone who finds the URL

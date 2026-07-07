@@ -129,73 +129,115 @@ make the safest interpretation instead and say so in your final summary.
 _ONE_UPDATE = asyncio.Lock()
 
 
+# Live progress so the UI can show what a self-update is doing (and the endpoint can
+# tell the truth about "busy" instead of a blind "on it").
+_PROGRESS: dict = {"active": False, "goal": "", "phase": "idle", "started": 0.0}
+
+
+def status() -> dict:
+    """Current self-update progress (for /api/self-update/status + the Bridge indicator)."""
+    return dict(_PROGRESS)
+
+
+def recover() -> None:
+    """On boot, prune any worktree/branch stranded by a crash or a mid-run restart —
+    so a leftover never wedges the 'one at a time' lock or clutters the repo."""
+    import subprocess
+    root = str(config.ROOT)
+    try:
+        subprocess.run(["git", "worktree", "prune"], cwd=root, timeout=15)
+        wt = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=root,
+                            capture_output=True, text=True, timeout=15).stdout
+        for line in wt.splitlines():
+            if line.startswith("worktree ") and "zax-selfupdate-" in line:
+                path = line.split(" ", 1)[1]
+                subprocess.run(["git", "worktree", "remove", "--force", path], cwd=root, timeout=15)
+        branches = subprocess.run(["git", "for-each-ref", "--format=%(refname:short)",
+                                   "refs/heads/self-update"], cwd=root,
+                                  capture_output=True, text=True, timeout=15).stdout.split()
+        # Keep only branches referenced by a still-pending approval; drop the rest.
+        keep = set()
+        for a in db.pending_approvals():
+            if a["tool"] == "self_update":
+                try:
+                    keep.add(json.loads(a.get("meta") or "{}").get("branch", ""))
+                except ValueError:
+                    pass
+        for b in branches:
+            if b and b not in keep:
+                subprocess.run(["git", "branch", "-D", b], cwd=root, timeout=15)
+    except Exception as exc:
+        db.log_event("error", "selfupdate", f"recover() failed: {str(exc)[:120]}")
+
+
 async def propose_and_test(goal: str, requester: str = "zax",
                            repo_root: Path | None = None) -> dict:
     """Propose a self-code-change for `goal` in an isolated worktree; test it there;
-    raise an approval request iff it passes. Returns a result dict — never raises."""
+    raise an approval request iff it passes. Returns a result dict — never raises.
+    The worktree is ALWAYS removed (finally); the branch survives only on success."""
     if not config.ALLOW_SELF_UPDATE:
         return {"ok": False, "error": "self-update is disabled (ZAX_ALLOW_SELF_UPDATE=0)"}
     if _ONE_UPDATE.locked():
-        return {"ok": False, "error": "another self-update is already in progress"}
+        return {"ok": False, "busy": True, "current_goal": _PROGRESS.get("goal", ""),
+                "error": "another self-update is already in progress"}
     async with _ONE_UPDATE:
-        root = repo_root or config.ROOT
-        slug = uuid.uuid4().hex[:8]
-        branch = f"self-update/{slug}"
         import tempfile
+        root = repo_root or config.ROOT
+        branch = f"self-update/{uuid.uuid4().hex[:8]}"
         worktree = Path(tempfile.mkdtemp(prefix="zax-selfupdate-"))
-
-        rc, out = await _git("worktree", "add", "--detach", str(worktree), "HEAD", cwd=root)
-        if rc != 0:
-            return {"ok": False, "error": f"could not create worktree: {out[:300]}"}
-        rc, _ = await _git("checkout", "-b", branch, cwd=worktree)
-        if rc != 0:
-            await _git("worktree", "remove", "--force", str(worktree), cwd=root)
-            return {"ok": False, "error": "could not create branch"}
-
+        _PROGRESS.update({"active": True, "goal": goal, "phase": "starting", "started": time.time()})
+        keep_branch = False
         try:
+            rc, out = await _git("worktree", "add", "--detach", str(worktree), "HEAD", cwd=root)
+            if rc != 0:
+                return {"ok": False, "error": f"could not create worktree: {out[:300]}"}
+            rc, _ = await _git("checkout", "-b", branch, cwd=worktree)
+            if rc != 0:
+                return {"ok": False, "error": "could not create branch"}
+
+            _PROGRESS["phase"] = "editing the code"
             summary = await _run_edit_loop(goal, worktree)
 
             rc, diffstat = await _git("diff", "--stat", "HEAD", cwd=worktree)
             if not diffstat.strip():
-                await _git("worktree", "remove", "--force", str(worktree), cwd=root)
-                await _git("branch", "-D", branch, cwd=root)
-                return {"ok": False, "error": "no changes were made", "summary": summary}
+                db.log_event("selfupdate", requester,
+                             f"Self-update for “{goal[:50]}” made no change — nothing to ship")
+                return {"ok": False, "error": "no code change was produced for that goal",
+                        "summary": summary}
 
+            _PROGRESS["phase"] = "running the test suite"
             db.log_event("selfupdate", requester,
-                         f"Proposed change for “{goal[:60]}” — running the test suite…")
+                         f"Proposed change for “{goal[:50]}” — running the test suite…")
             test_rc, test_out = await _run_tests(worktree)
             if test_rc != 0:
-                tail = test_out[-3000:]
-                await _git("worktree", "remove", "--force", str(worktree), cwd=root)
-                await _git("branch", "-D", branch, cwd=root)
                 db.log_event("selfupdate", requester,
-                             f"Self-update for “{goal[:60]}” failed its own tests — discarded")
-                return {"ok": False, "error": "tests failed after the change", "test_output": tail}
+                             f"Self-update for “{goal[:50]}” failed its own tests — discarded")
+                return {"ok": False, "error": "tests failed after the change",
+                        "test_output": test_out[-3000:]}
 
             await _git("add", "-A", "--", "zax", "tests", cwd=worktree)
-            commit_msg = f"Self-update: {goal[:72]}\n\n{summary}"
-            rc, out = await _git("commit", "-m", commit_msg, cwd=worktree)
+            rc, out = await _git("commit", "-m", f"Self-update: {goal[:72]}\n\n{summary}", cwd=worktree)
             if rc != 0:
-                await _git("worktree", "remove", "--force", str(worktree), cwd=root)
-                await _git("branch", "-D", branch, cwd=root)
                 return {"ok": False, "error": f"commit failed: {out[:300]}"}
 
             _, full_diff = await _git("diff", "HEAD~1", "--", "zax", "tests", cwd=worktree)
-            await _git("worktree", "remove", "--force", str(worktree), cwd=root)
-
             aid = db.add_approval(
                 agent=requester, task_id="", task_title=goal[:300], tool="self_update",
                 command=(diffstat + "\n\n" + full_diff)[:6000],
                 reason="self-authored code change — full test suite passed",
                 meta=json.dumps({"branch": branch, "goal": goal}),
             )
+            keep_branch = True  # preserved until the Founder approves or denies it
             db.log_event("selfupdate", requester,
-                         f"Self-update for “{goal[:60]}” passed tests — awaiting Founder approval (#{aid})")
+                         f"Self-update for “{goal[:50]}” passed tests — awaiting Founder approval (#{aid})")
             return {"ok": True, "approval_id": aid, "branch": branch, "summary": summary}
         except Exception as exc:
-            await _git("worktree", "remove", "--force", str(worktree), cwd=root)
-            await _git("branch", "-D", branch, cwd=root)
             return {"ok": False, "error": str(exc)[:300]}
+        finally:
+            await _git("worktree", "remove", "--force", str(worktree), cwd=root)
+            if not keep_branch:
+                await _git("branch", "-D", branch, cwd=root)
+            _PROGRESS.update({"active": False, "phase": "idle"})
 
 
 async def _run_edit_loop(goal: str, worktree: Path) -> str:

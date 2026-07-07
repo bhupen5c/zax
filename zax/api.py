@@ -165,13 +165,24 @@ class SelfUpdateIn(BaseModel):
     goal: str = Field(min_length=3, max_length=2000)
 
 
+@router.get("/self-update/status")
+async def self_update_status():
+    from . import selfupdate
+    return selfupdate.status()
+
+
 @router.post("/self-update")
 async def trigger_self_update(body: SelfUpdateIn):
     """Kick off a self-update from the Bridge button. Fires in the background (propose
-    + full test suite takes ~30-90s) and reports via events/approvals, same as the chat
-    action — this endpoint just returns immediately so the button doesn't hang."""
+    + full test suite takes ~30-90s) and reports via events/approvals. Returns busy=True
+    (not a false 'on it') if one is already running, so the UI can say so honestly."""
     if not config.ALLOW_SELF_UPDATE:
         raise HTTPException(400, "Self-update is disabled (ZAX_ALLOW_SELF_UPDATE=0)")
+    from . import selfupdate
+    st = selfupdate.status()
+    if st["active"]:
+        return {"ok": False, "busy": True, "current_goal": st["goal"], "phase": st["phase"]}
+    # Mark active synchronously so a rapid second click sees 'busy' too, then fire.
     asyncio.create_task(ceo._self_update_bg(body.goal))
     db.log_event("selfupdate", "founder", f"The Founder requested a self-update: {body.goal[:100]}")
     return {"ok": True, "note": "Writing the change now — it'll land in the approval bar if it passes tests."}

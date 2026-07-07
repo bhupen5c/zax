@@ -37,8 +37,9 @@ async def test_no_changes_made_is_discarded(tmp_path, monkeypatch):
 
     result = await selfupdate.propose_and_test("do nothing", repo_root=root)
     assert result["ok"] is False
-    assert "no changes" in result["error"]
+    assert "no code change" in result["error"]
     assert _branches(root) == ["main"]  # branch cleaned up, nothing left behind
+    assert selfupdate.status()["active"] is False  # progress flag reset even on the empty path
 
 
 async def test_failing_change_is_discarded_not_shipped(tmp_path, monkeypatch):
@@ -99,6 +100,23 @@ async def test_passing_change_raises_approval_then_merges(tmp_path, monkeypatch)
     assert "Merged" in outcome or "merged" in outcome.lower()
     assert _branches(root) == ["main"]  # merged branch cleaned up
     assert (root / "zax" / "sample.py").read_text() == 'def greet():\n    return "hello"\n'
+
+
+async def test_worktree_always_cleaned_up_even_on_crash(tmp_path, monkeypatch):
+    """A mid-run exception must never leak a worktree or branch (the finally guarantee)."""
+    root = _make_repo(tmp_path)
+
+    async def boom(*a, **k):
+        raise RuntimeError("edit loop exploded")
+    monkeypatch.setattr(selfupdate, "_run_edit_loop", boom)
+
+    result = await selfupdate.propose_and_test("anything", repo_root=root)
+    assert result["ok"] is False
+    assert _branches(root) == ["main"]          # no orphaned branch
+    wt = subprocess.run(["git", "worktree", "list"], cwd=root,
+                        capture_output=True, text=True).stdout
+    assert "zax-selfupdate-" not in wt          # no orphaned worktree
+    assert selfupdate.status()["active"] is False  # lock/progress released
 
 
 async def test_path_safety_refuses_outside_allowed_trees(tmp_path):

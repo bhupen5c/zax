@@ -440,6 +440,12 @@ nav { display: flex; flex-direction: column; gap: 4px; }
   white-space: nowrap;
 }
 #selfupdate-btn:hover { border-color: var(--cyan-dim); background: rgba(255, 190, 70, 0.08); }
+#selfupdate-btn.working {
+  border-color: var(--cyan-dim);
+  background: rgba(255, 190, 70, 0.12);
+  animation: selfupdate-pulse 1.4s ease-in-out infinite;
+}
+@keyframes selfupdate-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 #selfupdate-menu {
   position: absolute;
   top: calc(100% + 6px);

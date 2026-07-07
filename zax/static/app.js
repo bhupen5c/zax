@@ -1349,6 +1349,37 @@ function initCorePicker() {
 
 // ---------------- self-update picker (propose a change to Zax's own code)
 
+let _selfUpdatePolling = false;
+async function pollSelfUpdate() {
+  const btn = $("#selfupdate-btn");
+  if (!btn) return;
+  let st;
+  try { st = await api.get("/self-update/status"); } catch { return; }
+  if (st.active) {
+    btn.textContent = `⟲ ${st.phase || "working"}…`;
+    btn.classList.add("working");
+    if (!_selfUpdatePolling) {
+      _selfUpdatePolling = true;
+      const iv = setInterval(async () => {
+        let s;
+        try { s = await api.get("/self-update/status"); } catch { return; }
+        if (s.active) {
+          btn.textContent = `⟲ ${s.phase || "working"}…`;
+        } else {
+          clearInterval(iv);
+          _selfUpdatePolling = false;
+          btn.textContent = "⟲ self-update";
+          btn.classList.remove("working");
+          renderApprovals();  // a fresh approval may have just landed
+        }
+      }, 2500);
+    }
+  } else {
+    btn.textContent = "⟲ self-update";
+    btn.classList.remove("working");
+  }
+}
+
 function initSelfUpdatePicker() {
   const btn = $("#selfupdate-btn"), menu = $("#selfupdate-menu"),
         goal = $("#selfupdate-goal"), submit = $("#selfupdate-submit");
@@ -1366,11 +1397,17 @@ function initSelfUpdatePicker() {
     submit.textContent = "Writing…";
     try {
       const r = await api.post("/self-update", { goal: text });
-      addMsg("zax", `✓ On it — writing the change for “${text}” in an isolated branch now. ` +
-                    `If it passes the full test suite I'll bring it to you for approval in the bar above, ` +
-                    `Founder — nothing merges or restarts without your click.`);
-      goal.value = "";
-      menu.classList.add("hidden");
+      if (r.busy) {
+        addMsg("zax", `Hold on — a self-update is already running (“${r.current_goal || "…"}”, ${r.phase || "in progress"}). ` +
+                      `Watch the ⟲ button and the approval bar; send this again once it's done, Founder.`);
+      } else {
+        addMsg("zax", `✓ On it — writing the change for “${text}” in an isolated branch now. ` +
+                      `Watch the ⟲ button for progress; if it passes the full test suite it lands in the ` +
+                      `approval bar above — nothing merges or restarts without your click.`);
+        goal.value = "";
+        menu.classList.add("hidden");
+        pollSelfUpdate();  // start showing live progress
+      }
     } catch (e) {
       addMsg("zax", `Couldn't start the self-update: ${e.message || e}`);
     }
@@ -1394,6 +1431,7 @@ async function boot() {
   initCorePicker();
   initSelfUpdatePicker();
   renderApprovals();
+  pollSelfUpdate();  // resume the progress indicator if one is already running
   $("#org-founder").textContent = status.founder.toUpperCase();
 
   await renderSessions();
