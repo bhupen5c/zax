@@ -32,10 +32,9 @@ PROVIDER = os.environ.get("ZAX_PROVIDER", "auto")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 ZAX_MODEL = os.environ.get("ZAX_MODEL", "")  # blank = provider default
 
-# Scheduling / org policy. Zax is event-driven — tasks run the instant they're
-# delegated (pipeline.kick) and run to completion. SCHEDULER_SECONDS is ONLY how
-# often the routine scheduler wakes to fire due recurring routines + recover
-# restart-stranded work; it is not a task-execution poll.
+# Interval (seconds) at which the scheduler tick runs — fires due recurring
+# routines and recovers restart-stranded work. Zax is event-driven (tasks run the
+# instant they're delegated via pipeline.kick), so this is not a task-execution poll.
 SCHEDULER_SECONDS = int(os.environ.get("ZAX_SCHEDULER_SECONDS",
                         os.environ.get("ZAX_HEARTBEAT_SECONDS", "60")))
 HEARTBEAT_SECONDS = SCHEDULER_SECONDS  # back-compat alias for /api/status
@@ -79,5 +78,3 @@ TTS_VOICE = os.environ.get("ZAX_TTS_VOICE", "en-GB-RyanNeural")
 TTS_PITCH = os.environ.get("ZAX_TTS_PITCH", "-2Hz")
 TTS_RATE = os.environ.get("ZAX_TTS_RATE", "+0%")
 ELEVEN_KEY_ENV = os.environ.get("ELEVENLABS_API_KEY", "")
-
-
