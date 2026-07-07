@@ -209,8 +209,27 @@ def _find_json_end(s: str, start: int) -> int:
     return -1
 
 
+async def _plan_project_bg(goal: str) -> None:
+    """Decompose + launch a project off the chat thread (planning is an LLM call)."""
+    from . import pipeline, project
+    try:
+        p = await project.plan_and_start(goal)
+        if p is None:  # didn't decompose into multiple steps — just a single task
+            db.create_task(goal[:300], goal, priority=1)
+        pipeline.kick("project planned")
+    except Exception as exc:
+        db.log_event("error", "project", f"Project planning failed: {str(exc)[:160]}")
+
+
 def _run_action(act: dict) -> str:
     kind = act.get("type")
+    if kind == "start_project":
+        goal = str(act.get("goal", "")).strip()
+        if not goal:
+            return "(no goal given for the project)"
+        asyncio.create_task(_plan_project_bg(goal))
+        return (f"✓ Taking on “{goal[:60]}” as a project — decomposing it into steps and putting the "
+                f"team on it now. Watch it build in the Projects panel.")
     if kind == "create_task":
         task = db.create_task(
             act.get("title", "Untitled task"),

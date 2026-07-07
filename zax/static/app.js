@@ -1114,6 +1114,45 @@ function refreshAll() {
   renderSettings();
 }
 
+const STEP_ICON = { done: "✓", failed: "✕", in_progress: "⟳", assigned: "▸", inbox: "▸", blocked: "🔒" };
+
+async function renderProjects() {
+  const wrap = $("#projects-list");
+  if (!wrap) return;
+  let projects;
+  try { projects = await api.get("/projects"); } catch { return; }
+  if (!projects.length) {
+    wrap.innerHTML = `<div class="empty-hint">No projects yet. Give Zax a multi-step goal above (or just say one in chat) and he'll decompose it into a plan.</div>`;
+    return;
+  }
+  wrap.innerHTML = projects.map((p) => {
+    const pct = p.total ? Math.round((p.done / p.total) * 100) : 0;
+    const steps = p.steps.map((s, i) => `
+      <div class="proj-step ${s.status}">
+        <span class="si">${STEP_ICON[s.status] || "•"}</span>
+        <span class="sn">${i + 1}. ${esc(s.title)}</span>
+        <span class="sst">${esc(s.status)}${s.score != null ? " · " + s.score : ""}</span>
+      </div>`).join("");
+    return `
+      <div class="proj-card ${p.status}">
+        <div class="proj-head">
+          <span class="proj-goal">${esc(p.goal)}</span>
+          <span class="proj-badge ${p.status}">${p.status} · ${p.done}/${p.total}</span>
+        </div>
+        <div class="proj-bar"><div class="proj-bar-fill" style="width:${pct}%"></div></div>
+        <div class="proj-steps">${steps}</div>
+        ${p.result ? `<button class="proj-open" data-id="${p.id}">▾ view final deliverable</button>
+          <div class="proj-result hidden" id="pr-${p.id}">${esc(p.result)}</div>` : ""}
+      </div>`;
+  }).join("");
+  wrap.querySelectorAll(".proj-open").forEach((b) =>
+    b.addEventListener("click", () => {
+      const el = $(`#pr-${b.dataset.id}`);
+      el.classList.toggle("hidden");
+      b.textContent = el.classList.contains("hidden") ? "▾ view final deliverable" : "▴ hide deliverable";
+    }));
+}
+
 function setupNav() {
   $$(".nav-btn").forEach((btn) =>
     btn.addEventListener("click", () => {
@@ -1123,6 +1162,7 @@ function setupNav() {
       $(`#panel-${btn.dataset.panel}`).classList.add("active");
       refreshAll();
       if (btn.dataset.panel === "skills") renderSkills();
+      if (btn.dataset.panel === "projects") renderProjects();
       if (btn.dataset.panel === "graph") GraphView.activate();
       else GraphView.deactivate();
     })
@@ -1333,6 +1373,7 @@ async function boot() {
       updateProviderBadge(await api.get("/status"));
     } catch {}
     if ($("#panel-tasks").classList.contains("active")) renderTasks();
+    if ($("#panel-projects").classList.contains("active")) renderProjects();
     if ($("#panel-org").classList.contains("active")) renderOrg();
     if ($("#panel-ops").classList.contains("active")) renderOps();
     renderApprovals();  // risky commands can queue at any time — surface them promptly
@@ -1379,6 +1420,22 @@ document.addEventListener("DOMContentLoaded", () => {
     $("#task-desc").value = "";
     renderTasks();
     burstRefreshTasks();  // executes now, not on the next heartbeat
+  });
+
+  $("#project-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const goal = $("#project-goal").value.trim();
+    if (!goal) return;
+    const status = $("#project-status");
+    status.textContent = "Zax is decomposing the goal and assigning the team…";
+    $("#project-goal").value = "";
+    try {
+      const r = await api.post("/projects", { goal });
+      status.textContent = r.project_id
+        ? `Project launched — ${r.steps} steps, running now.`
+        : "That was a single task — filed and running.";
+    } catch (err) { status.textContent = `Couldn't start project: ${err.message || err}`; }
+    renderProjects();
   });
 
   $("#run-now-btn").addEventListener("click", async () => {

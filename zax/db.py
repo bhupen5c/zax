@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT 'inbox',       -- inbox | assigned | in_progress | done | failed
+    status TEXT NOT NULL DEFAULT 'inbox',       -- inbox | assigned | in_progress | done | failed | blocked
     priority INTEGER NOT NULL DEFAULT 2,        -- 1 high, 2 normal, 3 low
     agent_id TEXT,
     result TEXT,
@@ -53,8 +53,18 @@ CREATE TABLE IF NOT EXISTS tasks (
     feedback TEXT,
     tokens_used INTEGER NOT NULL DEFAULT 0,
     progress INTEGER NOT NULL DEFAULT 0,        -- 0-100, live during execution
+    project_id TEXT NOT NULL DEFAULT '',        -- '' = standalone; else a multi-step project
+    deps TEXT NOT NULL DEFAULT '',              -- comma-sep task ids that must finish first
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    goal TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',      -- active | done | failed
+    result TEXT NOT NULL DEFAULT '',            -- synthesized final deliverable
+    created REAL NOT NULL,
+    updated REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -186,8 +196,13 @@ CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'inbox', priority INTEGER NOT NULL DEFAULT 2, agent_id TEXT,
     result TEXT, score INTEGER, feedback TEXT, tokens_used BIGINT NOT NULL DEFAULT 0,
-    progress INTEGER NOT NULL DEFAULT 0, created_at DOUBLE PRECISION NOT NULL,
+    progress INTEGER NOT NULL DEFAULT 0, project_id TEXT NOT NULL DEFAULT '',
+    deps TEXT NOT NULL DEFAULT '', created_at DOUBLE PRECISION NOT NULL,
     updated_at DOUBLE PRECISION NOT NULL
+);
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY, goal TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active',
+    result TEXT NOT NULL DEFAULT '', created DOUBLE PRECISION NOT NULL, updated DOUBLE PRECISION NOT NULL
 );
 CREATE TABLE IF NOT EXISTS events (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, ts DOUBLE PRECISION NOT NULL,
@@ -289,6 +304,10 @@ def connect():
         acols = {r["name"] for r in _conn.execute("PRAGMA table_info(agents)")}
         if "skill" not in acols:
             _conn.execute("ALTER TABLE agents ADD COLUMN skill TEXT NOT NULL DEFAULT ''")
+        # add multi-step project columns to pre-existing task tables
+        if "project_id" not in tcols:
+            _conn.execute("ALTER TABLE tasks ADD COLUMN project_id TEXT NOT NULL DEFAULT ''")
+            _conn.execute("ALTER TABLE tasks ADD COLUMN deps TEXT NOT NULL DEFAULT ''")
         # add per-session chat: session_id on messages + a default 'main' session
         mcols = {r["name"] for r in _conn.execute("PRAGMA table_info(messages)")}
         if "session_id" not in mcols:
@@ -471,14 +490,54 @@ def update_performance(agent_id: str, score: int, failed: bool) -> float:
 
 # ---------------------------------------------------------------- tasks
 
-def create_task(title: str, description: str = "", priority: int = 2) -> dict:
+def create_task(title: str, description: str = "", priority: int = 2,
+                project_id: str = "", deps: str = "", status: str = "inbox") -> dict:
     tid = new_id()
     now = time.time()
     execute(
-        "INSERT INTO tasks (id, title, description, priority, created_at, updated_at) VALUES (?,?,?,?,?,?)",
-        (tid, title, description, priority, now, now),
+        "INSERT INTO tasks (id, title, description, priority, status, project_id, deps, "
+        "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+        (tid, title, description, priority, status, project_id, deps, now, now),
     )
     return get_task(tid)
+
+
+# ---------------------------------------------------------------- projects (multi-step)
+
+def create_project(goal: str) -> dict:
+    pid = new_id()
+    now = time.time()
+    execute("INSERT INTO projects (id, goal, created, updated) VALUES (?,?,?,?)", (pid, goal, now, now))
+    return query("SELECT * FROM projects WHERE id=?", (pid,))[0]
+
+
+def get_project(pid: str) -> Optional[dict]:
+    rows = query("SELECT * FROM projects WHERE id=?", (pid,))
+    return rows[0] if rows else None
+
+
+def active_projects() -> list[dict]:
+    return query("SELECT * FROM projects WHERE status='active' ORDER BY created DESC")
+
+
+def all_projects(limit: int = 50) -> list[dict]:
+    return query("SELECT * FROM projects ORDER BY created DESC LIMIT ?", (limit,))
+
+
+def project_tasks(pid: str) -> list[dict]:
+    return query("SELECT * FROM tasks WHERE project_id=? ORDER BY created_at", (pid,))
+
+
+def update_project(pid: str, **fields) -> None:
+    if not fields:
+        return
+    fields["updated"] = time.time()
+    cols = ", ".join(f"{k}=?" for k in fields)
+    execute(f"UPDATE projects SET {cols} WHERE id=?", (*fields.values(), pid))
+
+
+def set_task_status(task_id: str, status: str) -> None:
+    execute("UPDATE tasks SET status=?, updated_at=? WHERE id=?", (status, time.time(), task_id))
 
 
 def get_task(task_id: str) -> Optional[dict]:

@@ -425,6 +425,34 @@ nav { display: flex; flex-direction: column; gap: 4px; }
 .core-sep { border-top: 1px solid var(--line); margin: 6px 4px; }
 .core-note { font-size: 10px; color: var(--dim); padding: 6px 10px 8px; font-family: var(--mono); }
 
+/* Projects — multi-step goals */
+#project-form { display: flex; gap: 10px; margin: 12px 0; }
+#project-form input { flex: 1; }
+.proj-card {
+  border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 14px;
+  background: var(--panel);
+}
+.proj-card.done { border-color: rgba(125,255,176,0.28); }
+.proj-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+.proj-goal { font-size: 14px; color: var(--text); }
+.proj-badge { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; color: var(--dim); white-space: nowrap; }
+.proj-badge.done { color: #7dffb0; }
+.proj-badge.active { color: var(--cyan); }
+.proj-bar { height: 4px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; margin-bottom: 12px; }
+.proj-bar-fill { height: 100%; background: var(--cyan); transition: width 0.4s ease; }
+.proj-steps { display: flex; flex-direction: column; gap: 6px; }
+.proj-step { display: flex; align-items: center; gap: 10px; font-family: var(--mono); font-size: 12px; color: var(--dim); }
+.proj-step .si { width: 16px; text-align: center; }
+.proj-step .sn { flex: 1; color: var(--text); }
+.proj-step .sst { font-size: 10px; letter-spacing: 0.05em; }
+.proj-step.done .si, .proj-step.done .sst { color: #7dffb0; }
+.proj-step.in_progress .si, .proj-step.in_progress .sst { color: var(--cyan); }
+.proj-step.blocked { opacity: 0.6; }
+.proj-step.failed .si, .proj-step.failed .sst { color: var(--red); }
+.proj-open { margin-top: 12px; font-family: var(--mono); font-size: 11px; color: var(--cyan); background: transparent; border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 6px 12px; cursor: pointer; }
+.proj-result { margin-top: 10px; padding: 12px; background: rgba(0,0,0,0.3); border: 1px solid var(--line); border-radius: var(--radius-sm); white-space: pre-wrap; font-size: 13px; line-height: 1.6; max-height: 420px; overflow-y: auto; }
+.empty-hint { color: var(--dim); font-size: 13px; padding: 20px 4px; }
+
 /* Command approval gate — pending risky commands waiting for the Founder */
 #approvals-bar { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 #approvals-bar:empty { display: none; }

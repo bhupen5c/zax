@@ -137,6 +137,29 @@ async def providers():
     return out
 
 
+class ProjectIn(BaseModel):
+    goal: str = Field(min_length=3, max_length=2000)
+
+
+@router.get("/projects")
+async def list_projects():
+    from . import project
+    return project.overview()
+
+
+@router.post("/projects")
+async def start_project(body: ProjectIn):
+    # Plan synchronously here (the API caller can wait for the plan), then kick the org.
+    from . import project as project_mod
+    proj = await project_mod.plan_and_start(body.goal)
+    if proj is None:
+        t = db.create_task(body.goal[:300], body.goal, priority=1)
+        pipeline.kick("single task from project endpoint")
+        return {"ok": True, "single_task": t["id"], "note": "goal was a single task, not a project"}
+    pipeline.kick("project planned")
+    return {"ok": True, "project_id": proj["id"], "steps": len(db.project_tasks(proj["id"]))}
+
+
 class CoreSetIn(BaseModel):
     provider: str = Field(min_length=1, max_length=40)
     model: str = Field(default="", max_length=120)

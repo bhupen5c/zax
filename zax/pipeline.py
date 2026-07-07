@@ -121,6 +121,16 @@ async def run(execute_limit: int, *, reason: str = "", force: bool = False,
         except Exception as exc:
             db.log_event("error", "pipeline", f"HR pass failed: {str(exc)[:160]}")
 
+        # 5. Project maintenance — unblock subtasks whose dependencies just finished and
+        #    synthesize any project whose steps are all done. If work became ready, kick
+        #    again so the next project step runs now instead of on the next heartbeat.
+        try:
+            from . import project
+            if await project.advance():
+                kick("project step ready")
+        except Exception as exc:
+            db.log_event("error", "project", f"Project advance failed: {str(exc)[:160]}")
+
         if exec_error:
             _trip_backoff(exec_error)
             out = {"ok": False, "executed": executed, "reviewed": reviewed, "error": exec_error}
