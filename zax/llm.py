@@ -173,6 +173,16 @@ PROVIDERS: dict[str, dict] = {
         "tiers": {"deep": "kimi-k2.6", "fast": "moonshot-v1-32k"},
         "desc": "Moonshot AI (Kimi) models via API key.",
     },
+    "glm": {
+        "label": "GLM (Zhipu AI / Z.ai)",
+        "kind": "openai",
+        "env": "GLM_API_KEY",
+        "base": "https://api.z.ai/api/paas/v4",
+        "default_model": "glm-5.2",
+        "models": ["glm-5.2", "glm-5", "glm-4.6"],
+        "tiers": {"deep": "glm-5.2", "fast": "glm-4.6"},
+        "desc": "Zhipu AI's GLM models via Z.ai's international API.",
+    },
     "mock": {
         "label": "Mock core",
         "kind": "mock",
@@ -183,7 +193,7 @@ PROVIDERS: dict[str, dict] = {
 
 # Priority when auto-detecting: subscription first, then keyed APIs.
 AUTO_ORDER = ["claude-cli", "anthropic", "openai", "google", "openrouter", "groq",
-              "mistral", "deepseek", "xai", "together", "moonshot"]
+              "mistral", "deepseek", "xai", "together", "moonshot", "glm"]
 
 
 # ---------------------------------------------------------------- configuration
@@ -278,10 +288,14 @@ async def test(pid: str = "") -> tuple[bool, str]:
             return False, "claude CLI not found"
         return True, "claude CLI available (tested on next chat)"
     try:
+        # Reasoning models (Kimi, DeepSeek v4-pro, GLM-5.2, …) spend hidden thinking
+        # tokens from this same budget — 50 was tight enough to starve them before any
+        # visible text, which made a WORKING key report as a false "FAIL". 500 leaves
+        # headroom for that overhead while staying a cheap, fast probe.
         text, tokens = await chat(
             "You are a connectivity probe. Reply with one short sentence.",
             [{"role": "user", "content": "Confirm you are online."}],
-            max_tokens=50,
+            max_tokens=500,
             provider=pid,
         )
         return True, text.strip()[:200]
