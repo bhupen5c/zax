@@ -1237,6 +1237,43 @@ async function renderCoreMenu() {
   menu.innerHTML = html;
 }
 
+// ---------------- command approval gate (risky shell/code awaiting Founder OK)
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+async function renderApprovals() {
+  const bar = $("#approvals-bar");
+  if (!bar) return;
+  let items;
+  try { items = await api.get("/approvals"); } catch { return; }
+  bar.innerHTML = items.map((a) => `
+    <div class="approval" data-id="${a.id}">
+      <span class="who">⏸ ${esc(a.agent)} wants to run ${esc(a.tool)}</span>
+      <code class="cmd">${esc(a.command)}</code>
+      <div class="acts">
+        <button class="approve" data-id="${a.id}">✓ Approve &amp; run</button>
+        <button class="deny" data-id="${a.id}">✕ Deny</button>
+      </div>
+      <span class="why">held: ${esc(a.reason)}${a.task_title ? " · for “" + esc(a.task_title) + "”" : ""}</span>
+    </div>`).join("");
+  bar.querySelectorAll("button").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const id = b.dataset.id, decision = b.classList.contains("approve") ? "approve" : "deny";
+      b.disabled = true;
+      try {
+        const r = await api.post(`/approvals/${id}`, { decision });
+        if (decision === "approve") {
+          addMsg("zax", `Approved — ran it. Output:\n${(r.output || "(no output)").slice(0, 1200)}`);
+        } else {
+          addMsg("zax", "Denied. The command was not run, Founder.");
+        }
+      } catch (e) { addMsg("zax", `Approval failed: ${e.message || e}`); }
+      renderApprovals();
+    }));
+}
+
 function initCorePicker() {
   const btn = $("#core-btn"), menu = $("#core-menu");
   if (!btn) return;
@@ -1278,6 +1315,7 @@ async function boot() {
   const status = await api.get("/status");
   updateProviderBadge(status);
   initCorePicker();
+  renderApprovals();
   $("#org-founder").textContent = status.founder.toUpperCase();
 
   await renderSessions();
@@ -1297,6 +1335,7 @@ async function boot() {
     if ($("#panel-tasks").classList.contains("active")) renderTasks();
     if ($("#panel-org").classList.contains("active")) renderOrg();
     if ($("#panel-ops").classList.contains("active")) renderOps();
+    renderApprovals();  // risky commands can queue at any time — surface them promptly
   }, 4000);
 }
 

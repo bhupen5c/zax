@@ -165,7 +165,8 @@ async def execute_task(agent: dict, task: dict) -> None:
             if parsed and parsed.get("tool"):
                 tool_name = str(parsed["tool"])
                 args = parsed.get("args") or {}
-                output = await tools.run(tool_name, args, agent_name=agent["name"])
+                output = await tools.run(tool_name, args, agent_name=agent["name"],
+                                         task_id=task["id"], task_title=task["title"])
                 db.log_event("tool", agent["name"],
                              f"{agent['name']} used {tool_name}({json.dumps(args)[:120]})")
                 steps_left = config.MAX_TOOL_STEPS - step - 1

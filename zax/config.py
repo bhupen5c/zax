@@ -57,7 +57,10 @@ DEFAULT_TOKEN_BUDGET = int(os.environ.get("ZAX_DEFAULT_TOKEN_BUDGET", "250000"))
 # hard timeout — process isolation, not a security sandbox, but scoped enough to be
 # on by default. SHELL is arbitrary (`rm -rf` has no allowlist) so it stays opt-in.
 ALLOW_CODE = os.environ.get("ZAX_ALLOW_CODE", "1") == "1"
-ALLOW_SHELL = os.environ.get("ZAX_ALLOW_SHELL", "0") == "1"
+# Shell is ON, but a command approval gate (tools.py) holds anything not on a tight
+# read-only allowlist for the Founder to Approve/Deny — so `ls` runs but `rm -rf`
+# waits. Set ZAX_ALLOW_SHELL=0 to disable shell entirely.
+ALLOW_SHELL = os.environ.get("ZAX_ALLOW_SHELL", "1") == "1"
 CODE_TIMEOUT = int(os.environ.get("ZAX_CODE_TIMEOUT", "30"))
 
 # Zax voice. Engine + voice are chosen at runtime in Settings (stored in SQLite);

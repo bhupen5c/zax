@@ -92,14 +92,23 @@ def test_ssrf_guard_blocks_private_and_metadata():
             tools._assert_public_url(bad)
 
 
-def test_shell_disabled_by_default():
-    out = asyncio.run(tools.run("shell", {"command": "echo hi; rm -rf /"}))
-    assert "disabled" in out.lower() and "hi" not in out
+def test_dangerous_shell_is_held_for_approval():
+    # A destructive command is gated (never reaches execution).
+    out = asyncio.run(tools.run("shell", {"command": "echo x; rm -rf /"}))
+    assert "APPROVAL" in out
 
 
-def test_run_code_disabled_by_default():
-    out = asyncio.run(tools.run("run_code", {"code": "print('escaped')"}))
-    assert "disabled" in out.lower()
+def test_safe_shell_passes_the_gate():
+    # A read-only command is NOT held (it dispatches to shell — disabled in tests).
+    out = asyncio.run(tools.run("shell", {"command": "ls"}))
+    assert "APPROVAL" not in out
+
+
+def test_run_code_gate_holds_danger_but_not_compute():
+    held = asyncio.run(tools.run("run_code", {"code": "import os\nos.system('bad')"}))
+    assert "APPROVAL" in held
+    ok = asyncio.run(tools.run("run_code", {"code": "print(6*7)"}))
+    assert "APPROVAL" not in ok  # pure compute is not gated
 
 
 def test_file_tools_roundtrip_and_list(monkeypatch):

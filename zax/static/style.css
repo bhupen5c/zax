@@ -424,6 +424,34 @@ nav { display: flex; flex-direction: column; gap: 4px; }
 .core-item.disabled:hover { background: transparent; color: var(--text); }
 .core-sep { border-top: 1px solid var(--line); margin: 6px 4px; }
 .core-note { font-size: 10px; color: var(--dim); padding: 6px 10px 8px; font-family: var(--mono); }
+
+/* Command approval gate — pending risky commands waiting for the Founder */
+#approvals-bar { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+#approvals-bar:empty { display: none; }
+.approval {
+  border: 1px solid var(--red);
+  background: rgba(255, 77, 94, 0.07);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.approval .who { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+.approval .cmd {
+  font-family: var(--mono); font-size: 12px; color: var(--text);
+  background: rgba(0,0,0,0.35); border: 1px solid var(--line);
+  padding: 4px 8px; border-radius: 4px; flex: 1; min-width: 200px;
+  white-space: pre-wrap; word-break: break-all; max-height: 90px; overflow-y: auto;
+}
+.approval .why { font-size: 10px; color: var(--dim); width: 100%; }
+.approval .acts { display: flex; gap: 8px; }
+.approval button { font-family: var(--mono); font-size: 11px; padding: 6px 12px; border-radius: var(--radius-sm); cursor: pointer; border: 1px solid var(--line); background: transparent; }
+.approval .approve { color: #7dffb0; border-color: rgba(125,255,176,0.4); }
+.approval .approve:hover { background: rgba(125,255,176,0.12); }
+.approval .deny { color: var(--red); border-color: rgba(255,77,94,0.4); }
+.approval .deny:hover { background: rgba(255,77,94,0.12); }
 .msg-speak {
   background: transparent;
   border: none;

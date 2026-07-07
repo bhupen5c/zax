@@ -4,7 +4,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from . import ceo, config, db, graph, learning, llm, pipeline, skills, telegram, voice
+from . import ceo, config, db, graph, learning, llm, pipeline, skills, telegram, tools, voice
 
 router = APIRouter(prefix="/api")
 
@@ -183,6 +183,32 @@ async def configure_provider(body: ProviderConfigIn):
         db.set_setting("provider.custom.base_url", body.base_url.strip())
     db.log_event("config", "founder", f"The Founder updated {body.provider} configuration")
     return {"ok": True, "configured": llm.is_configured(body.provider)}
+
+
+class ApprovalIn(BaseModel):
+    decision: str = Field(pattern="^(approve|deny)$")
+
+
+@router.get("/approvals")
+async def list_approvals():
+    return db.pending_approvals()
+
+
+@router.post("/approvals/{aid}")
+async def resolve_approval(aid: int, body: ApprovalIn):
+    a = db.get_approval(aid)
+    if not a or a["status"] != "pending":
+        raise HTTPException(404, "No such pending approval")
+    if body.decision == "deny":
+        db.resolve_approval(aid, "denied")
+        db.log_event("approval", "founder", f"The Founder DENIED {a['tool']}: {a['command'][:100]}")
+        return {"ok": True, "status": "denied"}
+    # Approve → actually run the held command now, capture output.
+    out = await tools.run_approved(a["tool"], a["command"])
+    db.resolve_approval(aid, "approved", out)
+    db.log_event("approval", "founder",
+                 f"The Founder APPROVED and ran {a['tool']}: {a['command'][:100]}")
+    return {"ok": True, "status": "approved", "output": out[:6000]}
 
 
 @router.post("/tools/tavily")

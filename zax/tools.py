@@ -232,7 +232,70 @@ async def shell(command: str) -> str:
         return "(command timed out after 30s)"
 
 
-async def run(name: str, args: dict, agent_name: str = "agent") -> str:
+import shlex
+
+# --- Command approval gate ------------------------------------------------------
+# Shell can't be safely allowlisted in general (chaining `a; rm -rf ~` and absolute
+# paths defeat any prefix list), so only a tight READ-ONLY set runs unattended;
+# everything else pauses for the Founder. run_code is gated only on dangerous
+# patterns, so ordinary computation still runs freely.
+_SAFE_SHELL = {"ls", "pwd", "cat", "head", "tail", "grep", "egrep", "rg", "find",
+               "wc", "echo", "date", "whoami", "tree", "file", "stat", "du", "df",
+               "which", "cut", "sort", "uniq", "diff"}
+_SHELL_DANGER = re.compile(r'[;&|><`$(){}]|\.\.|(?:^|\s)[~/]|\brm\b|\bsudo\b|\bmv\b|\bcp\b|'
+                           r'\bdd\b|\bchmod\b|\bchown\b|\bkill\b|\bcurl\b|\bwget\b|\bmkfs\b|\bbrew\b|'
+                           r'\bnpm\b|\bpip\b|\bgit\s+push\b')
+_CODE_DANGER = re.compile(
+    r'os\.system|os\.popen|subprocess|os\.remove|os\.unlink|os\.rmdir|shutil\.rmtree|'
+    r'shutil\.move|__import__|\beval\s*\(|\bexec\s*\(|socket\.|requests\.(?:post|put|delete|patch)|'
+    r'\.unlink\s*\(|ctypes|os\.set[ug]id|/etc/|open\s*\([^)]*[\'"](?:/|~)')
+
+
+def _shell_needs_approval(cmd: str) -> tuple[bool, str]:
+    c = cmd.strip()
+    if not c:
+        return False, ""
+    if _SHELL_DANGER.search(c):
+        return True, "chaining/redirection/absolute path or a state-changing command"
+    try:
+        toks = shlex.split(c)
+    except ValueError:
+        return True, "unparseable command"
+    first = toks[0] if toks else ""
+    if first == "git":
+        return (toks[1:2] != [] and toks[1] not in {"status", "log", "diff", "show", "branch"},
+                f"git {toks[1] if len(toks) > 1 else ''} may change state")
+    if first not in _SAFE_SHELL:
+        return True, f"'{first}' is not on the read-only allowlist"
+    return False, ""
+
+
+def _code_needs_approval(code: str) -> tuple[bool, str]:
+    m = _CODE_DANGER.search(code)
+    return (True, f"uses a sensitive operation ({m.group(0)})") if m else (False, "")
+
+
+def _hold_for_approval(tool: str, command: str, reason: str, agent_name: str,
+                       task_id: str, task_title: str) -> str:
+    aid = db.add_approval(agent_name, task_id, task_title, tool, command, reason)
+    db.log_event("approval", agent_name,
+                 f"{agent_name} needs approval to run {tool}: {command[:100]} ({reason})")
+    return (f"⏸ HELD FOR FOUNDER APPROVAL (request #{aid}): this {tool} was NOT run because it "
+            f"{reason}. It is queued for the Founder to Approve/Deny in the Bridge. Do not retry "
+            f"it — continue with what you can, or state that this step is pending approval.")
+
+
+async def run_approved(tool: str, command: str) -> str:
+    """Execute a previously-held command AFTER the Founder approves — bypasses the gate."""
+    if tool == "shell":
+        return await shell(command)
+    if tool == "run_code":
+        return await run_code(command)
+    return f"Unknown tool: {tool}"
+
+
+async def run(name: str, args: dict, agent_name: str = "agent",
+              task_id: str = "", task_title: str = "") -> str:
     try:
         if name == "web_search":
             return await web_search(str(args.get("query", "")))
@@ -245,9 +308,17 @@ async def run(name: str, args: dict, agent_name: str = "agent") -> str:
         if name == "list_files":
             return list_files(str(args.get("path", ".")))
         if name == "run_code":
-            return await run_code(str(args.get("code", "")))
+            code = str(args.get("code", ""))
+            gated, why = _code_needs_approval(code)
+            if gated:
+                return _hold_for_approval("run_code", code, why, agent_name, task_id, task_title)
+            return await run_code(code)
         if name == "shell":
-            return await shell(str(args.get("command", "")))
+            command = str(args.get("command", ""))
+            gated, why = _shell_needs_approval(command)
+            if gated:
+                return _hold_for_approval("shell", command, why, agent_name, task_id, task_title)
+            return await shell(command)
         if name == "remember":
             db.remember(str(args.get("note", ""))[:1000], kind="note", agent=agent_name)
             return "Stored in company memory."

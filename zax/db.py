@@ -155,6 +155,19 @@ CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE OF content ON memories BEG
     INSERT INTO memories_fts(memories_fts, rowid, content) VALUES ('delete', old.id, old.content);
     INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
 END;
+CREATE TABLE IF NOT EXISTS approvals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent TEXT NOT NULL DEFAULT '',
+    task_id TEXT NOT NULL DEFAULT '',
+    task_title TEXT NOT NULL DEFAULT '',
+    tool TEXT NOT NULL,
+    command TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    output TEXT NOT NULL DEFAULT '',
+    created REAL NOT NULL,
+    resolved REAL NOT NULL DEFAULT 0
+);
 """
 
 # Postgres-native schema (Supabase). Identity columns replace AUTOINCREMENT; a GIN
@@ -219,6 +232,13 @@ CREATE TABLE IF NOT EXISTS memories (
     created DOUBLE PRECISION NOT NULL, last_used DOUBLE PRECISION NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_memories_fts ON memories USING GIN (to_tsvector('english', content));
+CREATE TABLE IF NOT EXISTS approvals (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, agent TEXT NOT NULL DEFAULT '',
+    task_id TEXT NOT NULL DEFAULT '', task_title TEXT NOT NULL DEFAULT '',
+    tool TEXT NOT NULL, command TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending', output TEXT NOT NULL DEFAULT '',
+    created DOUBLE PRECISION NOT NULL, resolved DOUBLE PRECISION NOT NULL DEFAULT 0
+);
 """
 
 
@@ -571,10 +591,47 @@ def remember(content: str, kind: str = "note", agent: str = "", importance: floa
         (content, kind, agent, importance, now, now))
 
 
+# ---------------------------------------------------------------- approvals (command gate)
+
+def add_approval(agent: str, task_id: str, task_title: str, tool: str,
+                 command: str, reason: str) -> int:
+    return _insert_returning_id(
+        "INSERT INTO approvals (agent, task_id, task_title, tool, command, reason, created) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (agent, task_id, task_title, tool, command, reason, time.time()))
+
+
+def pending_approvals() -> list[dict]:
+    return query("SELECT * FROM approvals WHERE status='pending' ORDER BY id DESC")
+
+
+def get_approval(aid: int) -> dict | None:
+    rows = query("SELECT * FROM approvals WHERE id = ?", (aid,))
+    return rows[0] if rows else None
+
+
+def resolve_approval(aid: int, status: str, output: str = "") -> None:
+    execute("UPDATE approvals SET status=?, output=?, resolved=? WHERE id=?",
+            (status, output[:6000], time.time(), aid))
+
+
+# Common function words that, OR-matched against FTS, match almost any document
+# and drown out the real keywords (e.g. "the"/"when" in a long question). Dropping
+# them keeps recall — and the graph mediator's coverage signal — precise.
+_RECALL_STOP = frozenset("""the and for with from that this what when where which who whom
+whose will would can could should have has had are was were you your our its their them they
+about into over under not but how why does did done your you're get got make made just like
+want wants need needs please thanks okay zax founder""".split())
+
+
 def recall(text: str, limit: int = 3, kinds: Optional[list[str]] = None,
            agent: str = "") -> list[dict]:
     # FTS5 match queries choke on punctuation; keep alphanumeric words only.
     words = [w for w in "".join(c if c.isalnum() else " " for c in text).split() if len(w) > 2]
+    # Drop stopwords so common function words can't trigger spurious matches; if
+    # that leaves nothing (a query made entirely of stopwords), keep the originals.
+    content_words = [w for w in words if w.lower() not in _RECALL_STOP]
+    words = content_words or words
     if not words:
         return []
     uniq = list(dict.fromkeys(words[:12]))
