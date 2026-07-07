@@ -1,5 +1,5 @@
 :root {
-  /* Stark / Iron Man gold theme. --cyan is the primary accent var used across
+  /* Gold accent theme. --cyan is the primary accent var used across
      the app; remapped to gold so the whole HUD warms up without renaming refs. */
   --bg: #0a0704;
   --bg2: #100b06;
@@ -28,7 +28,7 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  /* Higgsfield-generated Stark command-center backdrop, darkened so the HUD
+  /* generated command-center backdrop, darkened so the HUD
      stays readable. Fixed + cover so it sits behind everything. */
   background:
     linear-gradient(rgba(10, 7, 4, 0.74), rgba(10, 7, 4, 0.82)),
@@ -355,7 +355,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
 }
 #voice-toggle.on { border-color: var(--cyan-dim); background: rgba(255, 190, 70, 0.08); }
 
-/* Core picker — Hermes-style model/provider dropdown, right in the chat header */
+/* Core picker — model/provider dropdown in the chat header */
 #core-picker { position: relative; margin-left: 10px; }
 #core-btn {
   font-family: var(--mono);
@@ -1261,7 +1261,7 @@ button:disabled {
 .chip-ok { color: var(--green); border-color: rgba(61,255,158,0.3); }
 .chip-warn { color: var(--amber); border-color: rgba(255,185,56,0.3); }
 
-/* ============================== graph (graphify viz) */
+/* ============================== graph (viz) */
 #graph-stats { margin-bottom: 8px; }
 #graph-query-form {
   display: flex;

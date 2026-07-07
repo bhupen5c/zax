@@ -631,7 +631,7 @@ def recent_messages(limit: int = 20, session_id: str = "main") -> list[dict]:
 
 
 # ---------------------------------------------------------------- memory
-# Persistent, Odysseus-style: typed memories with importance and usage tracking,
+# Persistent: typed memories with importance and usage tracking,
 # recalled by hybrid scoring (FTS5 keyword rank × importance × recency).
 
 def remember(content: str, kind: str = "note", agent: str = "", importance: float = 1.0) -> int:

@@ -1,9 +1,10 @@
-"""The org heartbeat — a slow safety-net tick.
+"""Routine scheduler — the ONLY time-based tick.
 
-Most work now happens *immediately* when you delegate it (see pipeline.kick).
-The heartbeat remains as a backstop: it fires due routines into tickets and runs
-a bounded pipeline pass to catch anything missed, retry after a circuit-breaker
-backoff, or pick up work created outside the chat/API (e.g. routines).
+Zax is otherwise fully event-driven: work runs the instant it is delegated
+(pipeline.kick), and each task runs straight through to completion — there is no
+task 'heartbeat' polling loop. This loop exists solely to (a) turn due recurring
+routines into tasks and (b) recover work stranded by a crash/restart. Both simply
+kick the pipeline, which then executes immediately.
 """
 import asyncio
 import contextlib
@@ -14,14 +15,20 @@ _task: asyncio.Task | None = None
 
 
 async def tick() -> None:
-    # Routines: scheduled recurring work becomes tickets. (no LLM)
+    work = False
+    # Routines: scheduled recurring work becomes tasks (no LLM here).
     for routine in db.due_routines():
         db.touch_routine(routine["id"])
         db.create_task(routine["name"], routine["description"], priority=2)
         db.log_event("routine", "zax", f"Routine fired: {routine['name']}")
-
-    # Bounded pass — immediate kicks do the heavy lifting; this just backstops.
-    await pipeline.run(config.MAX_EXECUTIONS_PER_TICK, reason="heartbeat")
+        work = True
+    # Recover anything left ready/assigned by a restart so it isn't stranded.
+    if db.tasks_by_status("inbox") or db.tasks_by_status("assigned"):
+        work = True
+    # Event-driven: we don't run a pipeline pass here — we just kick, and the kick
+    # drains the queue to completion right away.
+    if work:
+        pipeline.kick("scheduler")
 
 
 async def _loop() -> None:
@@ -29,8 +36,8 @@ async def _loop() -> None:
         try:
             await tick()
         except Exception as exc:
-            db.log_event("error", "heartbeat", f"Heartbeat error: {exc}")
-        await asyncio.sleep(config.HEARTBEAT_SECONDS)
+            db.log_event("error", "scheduler", f"Scheduler error: {exc}")
+        await asyncio.sleep(config.SCHEDULER_SECONDS)
 
 
 def start() -> None:

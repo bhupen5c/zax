@@ -1,5 +1,4 @@
-"""Zax Memory Graph — embeds the graphify knowledge-graph engine
-(https://github.com/safishamsi/graphify, vendored under vendor/graphify).
+"""Zax Memory Graph — a vendored knowledge-graph engine (under vendor/graphify).
 
 Why this exists: instead of replaying the whole chat history to the model on every
 turn (expensive, and it overflows the context window), Zax distills conversations,
@@ -103,7 +102,7 @@ def stats() -> dict:
         "edges": db.graph_edge_count(),
         "by_kind": by_kind,
         "god_nodes": god,
-        "engine": "graphify (vendored)",
+        "engine": "memory graph",
     }
 
 

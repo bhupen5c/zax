@@ -1,4 +1,4 @@
-/* Zax UI — vanilla JS, no build step (Odysseus-style). */
+/* Zax UI — vanilla JS, no build step. */
 
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -806,7 +806,7 @@ async function renderProviders() {
   });
 }
 
-/* ============================== memory graph (graphify) */
+/* ============================== memory graph */
 
 const GRAPH_COLORS = {
   person: "#ff8fb3", project: "#19e3ff", preference: "#ffb938", fact: "#3dff9e",
@@ -1242,7 +1242,7 @@ function updateProviderBadge(status) {
   }
 }
 
-// ---------------- core picker (Hermes-style model dropdown in the chat header)
+// ---------------- core picker (model dropdown in the chat header)
 
 function updateCoreBtn(provider, model) {
   const btn = $("#core-btn");

@@ -67,7 +67,9 @@ async def test_self_check_revises_flagged_deliverable(monkeypatch):
             return (json.dumps({"final": "Draft with a defect."}), 5)
         if calls["n"] == 2:   # checker flags it
             return (json.dumps({"verdict": "fix", "issues": ["missing the requested table"]}), 5)
-        return (json.dumps({"final": "Revised deliverable with the table."}), 5)
+        if calls["n"] == 3:   # revision
+            return (json.dumps({"final": "Revised deliverable with the table."}), 5)
+        return (json.dumps({"verdict": "pass"}), 5)  # re-check passes → loop exits
     monkeypatch.setattr(llm, "chat", draft_check_revise)
     a = _agent()
     t = db.create_task("Compare 3 options in a table")
@@ -75,7 +77,7 @@ async def test_self_check_revises_flagged_deliverable(monkeypatch):
     await agents.execute_task(a, db.get_task(t["id"]))
     cur = db.get_task(t["id"])
     assert "Revised deliverable" in cur["result"]
-    assert calls["n"] == 3  # draft + check + revision
+    assert calls["n"] == 4  # draft + check(fix) + revise + re-check(pass) — the loop
     # the defect became an agent-scoped lesson for future tasks
     assert any("missing the requested table" in m["content"] for m in db.list_memories())
 

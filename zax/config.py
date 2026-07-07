@@ -32,14 +32,21 @@ PROVIDER = os.environ.get("ZAX_PROVIDER", "auto")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 ZAX_MODEL = os.environ.get("ZAX_MODEL", "")  # blank = provider default
 
-# Heartbeat / org policy (the Paperclip side)
-HEARTBEAT_SECONDS = int(os.environ.get("ZAX_HEARTBEAT_SECONDS", "20"))
+# Scheduling / org policy. Zax is event-driven — tasks run the instant they're
+# delegated (pipeline.kick) and run to completion. SCHEDULER_SECONDS is ONLY how
+# often the routine scheduler wakes to fire due recurring routines + recover
+# restart-stranded work; it is not a task-execution poll.
+SCHEDULER_SECONDS = int(os.environ.get("ZAX_SCHEDULER_SECONDS",
+                        os.environ.get("ZAX_HEARTBEAT_SECONDS", "60")))
+HEARTBEAT_SECONDS = SCHEDULER_SECONDS  # back-compat alias for /api/status
 MAX_TOOL_STEPS = int(os.environ.get("ZAX_MAX_TOOL_STEPS", "10"))
 # Claude-style autonomous loop: every deliverable is adversarially self-checked (and
 # revised once if issues are found) BEFORE it reaches review. The checker runs on the
 # core named by the `verify.core` setting ("provider/model", e.g. "ollama/ornith:9b"
 # for a free local critic) and falls back to the active core.
 SELF_CHECK = os.environ.get("ZAX_SELF_CHECK", "1") == "1"
+# The verify loop revises & re-checks until the critic passes, up to this many rounds.
+MAX_VERIFY_ROUNDS = int(os.environ.get("ZAX_MAX_VERIFY_ROUNDS", "3"))
 MAX_EXECUTIONS_PER_TICK = int(os.environ.get("ZAX_MAX_EXECUTIONS_PER_TICK", "2"))
 # When you delegate work, Zax drains the queue immediately (not on the next
 # heartbeat). This caps how many tasks one immediate drain executes before
@@ -51,12 +58,15 @@ MIN_TASKS_BEFORE_FIRE = int(os.environ.get("ZAX_MIN_TASKS_BEFORE_FIRE", "3"))
 HIRE_BACKLOG_PER_AGENT = int(os.environ.get("ZAX_HIRE_BACKLOG_PER_AGENT", "3"))
 DEFAULT_TOKEN_BUDGET = int(os.environ.get("ZAX_DEFAULT_TOKEN_BUDGET", "250000"))
 
-# Agent tools (the Odysseus side). This is what makes agents OPERATORS, not just
+# Agent tools. This is what makes agents OPERATORS, not just
 # writers: run_code lets them execute and VERIFY their work before delivering.
 # It runs in an isolated Python subprocess (`-I`), workspace cwd, restricted env,
 # hard timeout — process isolation, not a security sandbox, but scoped enough to be
 # on by default. SHELL is arbitrary (`rm -rf` has no allowlist) so it stays opt-in.
 ALLOW_CODE = os.environ.get("ZAX_ALLOW_CODE", "1") == "1"
+# Let agents hand whole tasks to external agent apps installed on this machine
+# (Hermes, opencode) and use their result — "control my projects with other agents".
+ALLOW_EXTERNAL_AGENTS = os.environ.get("ZAX_ALLOW_EXTERNAL_AGENTS", "1") == "1"
 # Shell is ON, but a command approval gate (tools.py) holds anything not on a tight
 # read-only allowlist for the Founder to Approve/Deny — so `ls` runs but `rm -rf`
 # waits. Set ZAX_ALLOW_SHELL=0 to disable shell entirely.

@@ -203,22 +203,30 @@ async def execute_task(agent: dict, task: dict) -> None:
         if not result.strip():
             raise RuntimeError("agent produced an empty deliverable")
 
-        # Autonomous verify-before-deliver loop (Claude-style): an adversarial
-        # checker inspects the draft; real defects trigger ONE revision pass, and
-        # each finding is stored as an agent-scoped lesson so the whole org stops
-        # repeating the mistake (memory.recall_context injects it next run).
+        # Autonomous verify-before-deliver LOOP: an adversarial checker inspects the
+        # draft and, while it finds real defects, the agent revises and is re-checked —
+        # up to MAX_VERIFY_ROUNDS times or until it passes. Nothing ships until the
+        # checker is satisfied (or we hit the round cap). Every finding becomes an
+        # agent-scoped lesson so the whole org stops repeating the mistake.
         if config.SELF_CHECK:
-            db.set_progress(task["id"], 84)
-            issues = await _self_check(agent, task, result)
-            if issues:
+            for round_n in range(1, config.MAX_VERIFY_ROUNDS + 1):
+                db.set_progress(task["id"], min(84 + round_n * 2, 89))
+                issues = await _self_check(agent, task, result)
+                if not issues:
+                    db.log_event("check", agent["name"],
+                                 f"self-check passed “{task['title'][:50]}”"
+                                 + (f" after {round_n - 1} revision(s)" if round_n > 1 else "")
+                                 + " — shipping")
+                    break
                 db.log_event("check", agent["name"],
-                             f"self-check flagged {len(issues)} issue(s) on “{task['title'][:60]}” — revising")
-                db.set_progress(task["id"], 87)
-                result = await _revise(agent, task, result, issues)
+                             f"self-check round {round_n}: {len(issues)} issue(s) on "
+                             f"“{task['title'][:50]}” — revising")
                 learning.remember_check_lesson(agent, task, issues)
+                result = await _revise(agent, task, result, issues)
             else:
                 db.log_event("check", agent["name"],
-                             f"self-check passed “{task['title'][:60]}” — shipping")
+                             f"self-check hit the {config.MAX_VERIFY_ROUNDS}-round cap on "
+                             f"“{task['title'][:50]}” — shipping best effort")
         # Compare-and-set: only commit if this ticket is still ours and in_progress.
         # If it was reassigned mid-run (e.g. the agent was fired), discard the
         # duplicate result rather than orphan it. progress 90 = awaiting review.

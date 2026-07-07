@@ -1,7 +1,7 @@
 """Zax's brain: chat, task assignment, performance reviews, hiring and firing.
 
 This is the Paperclip side (org chart, tickets, budgets, HR policy) driven by an
-LLM persona, fused with the Odysseus side (chat + memory + tools) in agents.py.
+LLM persona; execution (chat + memory + tools) lives in agents.py.
 """
 import asyncio
 import json
