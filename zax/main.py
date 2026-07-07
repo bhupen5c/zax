@@ -1,6 +1,7 @@
 """Zax — AI CEO & agent orchestration. FastAPI app entrypoint."""
 import base64
 import hmac
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -54,6 +55,17 @@ async def lifespan(app: FastAPI):
                    (pack["persona"], pack["key"], pack["persona"]))
     heartbeat.start()
     telegram.start()  # no-op unless a bot token is configured
+    # A public bind with no password + code/shell enabled = anyone who finds the URL
+    # owns your CEO. Refuse to run that combination unless explicitly overridden.
+    public = config.HOST not in ("127.0.0.1", "localhost", "::1")
+    if public and not config.ACCESS_PASSWORD:
+        msg = ("Zax is bound publicly (ZAX_HOST=%s) with NO ZAX_ACCESS_PASSWORD. "
+               "Anyone who finds this URL could command your CEO and run code. Set "
+               "ZAX_ACCESS_PASSWORD, or ZAX_ALLOW_INSECURE=1 to override." % config.HOST)
+        if os.environ.get("ZAX_ALLOW_INSECURE") != "1":
+            raise RuntimeError(msg)
+        print("\n⚠  " + msg + "\n")
+        db.log_event("warn", "zax", msg)
     provider = llm.resolve_provider()
     print(BANNER)
     print(f"  Founder:   {config.FOUNDER_NAME}")
