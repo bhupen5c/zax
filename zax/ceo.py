@@ -234,12 +234,27 @@ async def _self_update_bg(goal: str) -> None:
         db.log_event("error", "selfupdate", f"Self-update failed: {str(exc)[:160]}")
 
 
+_RECENT_SELF_UPDATE_GOALS: dict[str, float] = {}  # normalized goal -> last-fired timestamp
+_SELF_UPDATE_COOLDOWN = 600  # seconds — defense-in-depth against memory-recall re-triggers
+
+
 def _run_action(act: dict) -> str:
     kind = act.get("type")
     if kind == "self_update":
         goal = str(act.get("goal", "")).strip()
         if not goal:
             return "(no goal given for the self-update)"
+        # A stale RELEVANT MEMORY fact can make the model re-emit an action it already
+        # ran for an unrelated question — costs a full test-suite run for nothing.
+        # This is a mechanical backstop; the prompt is the primary defense.
+        norm = re.sub(r"\s+", " ", goal.lower()).strip()
+        now = time.time()
+        last = _RECENT_SELF_UPDATE_GOALS.get(norm, 0)
+        if now - last < _SELF_UPDATE_COOLDOWN:
+            return (f"Already in motion — I proposed this exact change recently and it's either "
+                    f"awaiting your approval or already shipped. Check the Bridge's approval bar "
+                    f"or ask me something new, Founder.")
+        _RECENT_SELF_UPDATE_GOALS[norm] = now
         asyncio.create_task(_self_update_bg(goal))
         return (f"✓ On it — writing the change for “{goal[:60]}” in an isolated branch now. "
                 f"If it passes the full test suite I'll bring it to you for approval before "
