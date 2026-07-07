@@ -46,9 +46,9 @@ def _safe_source_path(root: Path, rel: str) -> Path:
     """Resolve `rel` under `root`, restricted to zax/ and tests/ — refuses path
     traversal, absolute paths, and anything touching .git or outside those trees."""
     rel = rel.strip().lstrip("/")
-    if not rel or ".." in Path(rel).parts or Path(rel).is_absolute():
+    parts = Path(rel).parts if rel else ()
+    if not parts or ".." in parts or Path(rel).is_absolute():
         raise ValueError("invalid path")
-    parts = Path(rel).parts
     if parts[0] not in ALLOWED_PREFIXES or ".git" in parts:
         raise ValueError(f"path must be under {'/'.join(ALLOWED_PREFIXES)}/ — refused: {rel}")
     p = (root / rel).resolve()
@@ -58,8 +58,11 @@ def _safe_source_path(root: Path, rel: str) -> Path:
 
 
 def _list_source(root: Path, rel: str) -> str:
+    # Listing the repo root just shows the editable trees (avoids resolving an empty path).
+    if (rel or "").strip().strip("/.") == "":
+        return "\n".join(f"{p}/" for p in ALLOWED_PREFIXES)
     try:
-        base = _safe_source_path(root, rel or "zax")
+        base = _safe_source_path(root, rel)
     except ValueError as e:
         return f"Error: {e}"
     if not base.exists():
@@ -125,8 +128,54 @@ make the safest interpretation instead and say so in your final summary.
 
 {tools}"""
 
+_PLAN_SYSTEM = """You are Zax's self-improvement architect. The Founder gave a goal for
+changing Zax's OWN source code. Break it into an ORDERED list of concrete, individually
+implementable steps — each one a self-contained change a single engineer could make and
+test on its own. A small, single change is just ONE step. A big "vision" goal becomes
+several focused steps (typically 2-6). Keep steps minimal and independent where possible;
+put foundational changes (config/schema/helpers) before the code that uses them.
+
+Only zax/ and tests/ are editable. Never propose weakening safety (approval gate,
+path restrictions, encryption, the verify loop). If part of the goal is vague or risky,
+turn it into the safest concrete interpretation.
+
+Reply with ONLY: {"steps": [{"title": "short label", "detail": "precise instruction for this one change"}]}"""
+
 
 _ONE_UPDATE = asyncio.Lock()
+
+
+async def _plan(goal: str) -> list[dict]:
+    """Decompose the goal into ordered concrete steps. Falls back to a single step
+    (the goal itself) if planning fails or returns nothing usable."""
+    try:
+        text, _ = await llm.chat(_PLAN_SYSTEM, [{"role": "user", "content": f"GOAL: {goal}"}],
+                                 max_tokens=1500)
+        parsed = llm.extract_json(text) or {}
+        steps = [s for s in (parsed.get("steps") or [])
+                 if isinstance(s, dict) and str(s.get("detail", "")).strip()]
+        if steps:
+            return steps[:config.SELF_UPDATE_MAX_PLAN_STEPS]
+    except Exception:
+        pass
+    return [{"title": goal[:60], "detail": goal}]
+
+
+async def _test_with_fixes(detail: str, worktree: Path, progress_label: str = "") -> tuple[int, str]:
+    """Run the test suite; while it fails, let the model read the failure and fix it,
+    up to SELF_UPDATE_FIX_ATTEMPTS times. Returns the final (rc, output)."""
+    for attempt in range(config.SELF_UPDATE_FIX_ATTEMPTS + 1):
+        _PROGRESS["phase"] = (f"{progress_label}: testing" if progress_label else "running the test suite")
+        rc, out = await _run_tests(worktree)
+        if rc == 0 or attempt == config.SELF_UPDATE_FIX_ATTEMPTS:
+            return rc, out
+        _PROGRESS["phase"] = (f"{progress_label}: fixing test failure" if progress_label
+                              else "fixing a test failure")
+        fix_goal = (f"Your change for “{detail[:120]}” broke the test suite. Read the failing "
+                    f"tests and the code, and FIX it so the whole suite passes again. Do not "
+                    f"delete or weaken tests to make them pass.\n\nTEST OUTPUT:\n{out[-2500:]}")
+        await _run_edit_loop(fix_goal, worktree)
+    return rc, out
 
 
 # Live progress so the UI can show what a self-update is doing (and the endpoint can
@@ -149,7 +198,8 @@ def recover() -> None:
         wt = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=root,
                             capture_output=True, text=True, timeout=15).stdout
         for line in wt.splitlines():
-            if line.startswith("worktree ") and "zax-selfupdate-" in line:
+            if line.startswith("worktree ") and ("selfupdate-worktrees" in line
+                                                  or "zax-selfupdate-" in line):
                 path = line.split(" ", 1)[1]
                 subprocess.run(["git", "worktree", "remove", "--force", path], cwd=root, timeout=15)
         branches = subprocess.run(["git", "for-each-ref", "--format=%(refname:short)",
@@ -181,10 +231,14 @@ async def propose_and_test(goal: str, requester: str = "zax",
         return {"ok": False, "busy": True, "current_goal": _PROGRESS.get("goal", ""),
                 "error": "another self-update is already in progress"}
     async with _ONE_UPDATE:
-        import tempfile
         root = repo_root or config.ROOT
-        branch = f"self-update/{uuid.uuid4().hex[:8]}"
-        worktree = Path(tempfile.mkdtemp(prefix="zax-selfupdate-"))
+        slug = uuid.uuid4().hex[:8]
+        branch = f"self-update/{slug}"
+        # Keep the worktree in the app's own data dir (stable, git-ignored) — NOT system
+        # temp, which can be reaped under launchd mid-run and vanish out from under us.
+        wt_base = config.DATA_DIR / "selfupdate-worktrees"
+        wt_base.mkdir(parents=True, exist_ok=True)
+        worktree = wt_base / slug
         _PROGRESS.update({"active": True, "goal": goal, "phase": "starting", "started": time.time()})
         keep_branch = False
         try:
@@ -195,44 +249,71 @@ async def propose_and_test(goal: str, requester: str = "zax",
             if rc != 0:
                 return {"ok": False, "error": "could not create branch"}
 
-            _PROGRESS["phase"] = "editing the code"
-            summary = await _run_edit_loop(goal, worktree)
+            _, base = await _git("rev-parse", "HEAD", cwd=worktree)
+            base = base.strip()
 
-            rc, diffstat = await _git("diff", "--stat", "HEAD", cwd=worktree)
-            if not diffstat.strip():
-                db.log_event("selfupdate", requester,
-                             f"Self-update for “{goal[:50]}” made no change — nothing to ship")
-                return {"ok": False, "error": "no code change was produced for that goal",
-                        "summary": summary}
-
-            _PROGRESS["phase"] = "running the test suite"
+            # Decompose the goal. A small change -> a 1-step plan (fast path); a big
+            # vision -> several concrete, individually-testable steps.
+            _PROGRESS["phase"] = "planning the change"
+            steps = await _plan(goal)
+            multi = len(steps) > 1
             db.log_event("selfupdate", requester,
-                         f"Proposed change for “{goal[:50]}” — running the test suite…")
-            test_rc, test_out = await _run_tests(worktree)
-            if test_rc != 0:
+                         f"Self-update for “{goal[:50]}” — planned {len(steps)} step(s)")
+
+            landed: list[str] = []
+            skipped: list[str] = []
+            for i, step in enumerate(steps, 1):
+                title = str(step.get("title", f"step {i}"))[:80]
+                detail = str(step.get("detail", title))
+                _PROGRESS["phase"] = (f"step {i}/{len(steps)}: {title}" if multi else "editing the code")
+                await _run_edit_loop(detail, worktree)
+
+                # Test this step; give the model a couple of chances to fix a failure
+                # before we give up on it.
+                test_rc, test_out = await _test_with_fixes(detail, worktree,
+                                                           progress_label=f"step {i}/{len(steps)}" if multi else "")
+                if test_rc == 0 and (await _git("status", "--porcelain", cwd=worktree))[1].strip():
+                    await _git("add", "-A", "--", "zax", "tests", cwd=worktree)
+                    await _git("commit", "-m", f"{title}", cwd=worktree)
+                    landed.append(title)
+                else:
+                    # Revert just this step's edits back to the last green checkpoint,
+                    # then carry on with the rest of the plan.
+                    await _git("reset", "--hard", cwd=worktree)
+                    await _git("clean", "-fd", "--", "zax", "tests", cwd=worktree)
+                    if test_rc != 0:
+                        skipped.append(title)
+
+            rc, cum_diffstat = await _git("diff", "--stat", base, cwd=worktree)
+            if not cum_diffstat.strip():
                 db.log_event("selfupdate", requester,
-                             f"Self-update for “{goal[:50]}” failed its own tests — discarded")
-                return {"ok": False, "error": "tests failed after the change",
-                        "test_output": test_out[-3000:]}
+                             f"Self-update for “{goal[:50]}” produced no shippable change")
+                return {"ok": False, "error": "no code change survived (nothing passed its tests)",
+                        "skipped": skipped}
 
-            await _git("add", "-A", "--", "zax", "tests", cwd=worktree)
-            rc, out = await _git("commit", "-m", f"Self-update: {goal[:72]}\n\n{summary}", cwd=worktree)
-            if rc != 0:
-                return {"ok": False, "error": f"commit failed: {out[:300]}"}
-
-            _, full_diff = await _git("diff", "HEAD~1", "--", "zax", "tests", cwd=worktree)
+            _, full_diff = await _git("diff", base, "--", "zax", "tests", cwd=worktree)
+            plan_note = ""
+            if multi:
+                plan_note = ("Plan: " + "; ".join(landed)
+                             + (f"  |  skipped (failed tests): {', '.join(skipped)}" if skipped else "")
+                             + "\n\n")
             aid = db.add_approval(
                 agent=requester, task_id="", task_title=goal[:300], tool="self_update",
-                command=(diffstat + "\n\n" + full_diff)[:6000],
-                reason="self-authored code change — full test suite passed",
+                command=(plan_note + cum_diffstat + "\n\n" + full_diff)[:8000],
+                reason=(f"self-authored change — {len(landed)} step(s) landed, full test suite passes"),
                 meta=json.dumps({"branch": branch, "goal": goal}),
             )
             keep_branch = True  # preserved until the Founder approves or denies it
             db.log_event("selfupdate", requester,
-                         f"Self-update for “{goal[:50]}” passed tests — awaiting Founder approval (#{aid})")
-            return {"ok": True, "approval_id": aid, "branch": branch, "summary": summary}
+                         f"Self-update for “{goal[:50]}” — {len(landed)} step(s) passed tests, "
+                         f"awaiting Founder approval (#{aid})")
+            return {"ok": True, "approval_id": aid, "branch": branch,
+                    "landed": landed, "skipped": skipped}
         except Exception as exc:
-            return {"ok": False, "error": str(exc)[:300]}
+            import traceback
+            db.log_event("error", "selfupdate",
+                         f"propose_and_test crashed: {traceback.format_exc()[-600:]}")
+            return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:250]}"}
         finally:
             await _git("worktree", "remove", "--force", str(worktree), cwd=root)
             if not keep_branch:
@@ -244,7 +325,9 @@ async def _run_edit_loop(goal: str, worktree: Path) -> str:
     system = _SYSTEM.format(goal=goal, tools=_TOOL_SPECS)
     messages = [{"role": "user", "content": "Make the change now."}]
     for step in range(config.SELF_UPDATE_MAX_STEPS):
-        text, _ = await llm.chat(system, messages, max_tokens=4000)
+        # 8000, not 4000: reasoning models (GLM-5.2, DeepSeek v4-pro, Kimi) spend hidden
+        # thinking tokens from this budget and a whole file's content can be large.
+        text, _ = await llm.chat(system, messages, max_tokens=8000)
         parsed = llm.extract_json(text)
         if parsed and parsed.get("tool"):
             name, args = str(parsed["tool"]), parsed.get("args") or {}

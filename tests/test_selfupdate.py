@@ -15,6 +15,7 @@ def _make_repo(tmp_path) -> Path:
     (root / "tests").mkdir(parents=True)
     (root / "zax" / "sample.py").write_text('def greet():\n    return "hi"\n')
     (root / "tests" / "test_sample.py").write_text("def test_ok():\n    assert True\n")
+    (root / ".gitignore").write_text("__pycache__/\n*.pyc\n")  # mirror the real repo
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=root, check=True)
     subprocess.run(["git", "config", "user.name", "tester"], cwd=root, check=True)
@@ -42,8 +43,13 @@ async def test_no_changes_made_is_discarded(tmp_path, monkeypatch):
     assert selfupdate.status()["active"] is False  # progress flag reset even on the empty path
 
 
+async def _single_step_plan(goal):
+    return [{"title": goal[:60], "detail": goal}]
+
+
 async def test_failing_change_is_discarded_not_shipped(tmp_path, monkeypatch):
     root = _make_repo(tmp_path)
+    monkeypatch.setattr(selfupdate, "_plan", _single_step_plan)
     calls = {"n": 0}
 
     async def fake_chat(system, messages, **k):
@@ -61,15 +67,14 @@ async def test_failing_change_is_discarded_not_shipped(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "chat", fake_chat)
 
     result = await selfupdate.propose_and_test("break greet on purpose", repo_root=root)
-    assert result["ok"] is False
-    assert "test" in result["error"].lower()
-    assert "test_output" in result
+    assert result["ok"] is False  # the broken step was reverted, nothing survived
     assert _branches(root) == ["main"]  # failed attempt never left a branch behind
     assert not db.pending_approvals()  # and never reached the Founder
 
 
 async def test_passing_change_raises_approval_then_merges(tmp_path, monkeypatch):
     root = _make_repo(tmp_path)
+    monkeypatch.setattr(selfupdate, "_plan", _single_step_plan)
     calls = {"n": 0}
 
     async def fake_chat(system, messages, **k):
@@ -102,6 +107,49 @@ async def test_passing_change_raises_approval_then_merges(tmp_path, monkeypatch)
     assert (root / "zax" / "sample.py").read_text() == 'def greet():\n    return "hello"\n'
 
 
+async def test_big_vision_decomposes_into_steps_and_lands_passing_ones(tmp_path, monkeypatch):
+    """A multi-step vision: plan -> 2 steps -> both edited, each test-gated -> one
+    cumulative approval. A step whose edit breaks tests is reverted and skipped."""
+    root = _make_repo(tmp_path)
+
+    # Planner returns 2 steps.
+    async def fake_plan(goal):
+        return [
+            {"title": "add hello", "detail": "add a hello function"},
+            {"title": "add bye", "detail": "add a bye function"},
+        ]
+    monkeypatch.setattr(selfupdate, "_plan", fake_plan)
+
+    calls = {"n": 0}
+
+    async def fake_edit(detail, worktree):
+        calls["n"] += 1
+        p = worktree / "zax" / "sample.py"
+        src = p.read_text()
+        if "hello" in detail:
+            p.write_text(src + '\ndef hello():\n    return "hello"\n')
+        elif "bye" in detail:
+            p.write_text(src + '\ndef bye():\n    return "bye"\n')
+        return f"did: {detail}"
+    monkeypatch.setattr(selfupdate, "_run_edit_loop", fake_edit)
+
+    result = await selfupdate.propose_and_test("add hello and bye helpers", repo_root=root)
+    assert result["ok"] is True
+    assert set(result["landed"]) == {"add hello", "add bye"}
+    approval = db.get_approval(result["approval_id"])
+    assert "hello" in approval["command"] and "bye" in approval["command"]
+    assert "Plan:" in approval["command"]  # multi-step note included
+
+    # Merge and confirm BOTH steps are present in the final file.
+    async def no_restart(delay=1.5):
+        pass
+    monkeypatch.setattr(selfupdate, "_delayed_restart", no_restart)
+    await selfupdate.apply_approved(approval, repo_root=root)
+    final = (root / "zax" / "sample.py").read_text()
+    assert "def hello()" in final and "def bye()" in final
+    assert _branches(root) == ["main"]
+
+
 async def test_worktree_always_cleaned_up_even_on_crash(tmp_path, monkeypatch):
     """A mid-run exception must never leak a worktree or branch (the finally guarantee)."""
     root = _make_repo(tmp_path)
@@ -132,3 +180,11 @@ async def test_path_safety_refuses_outside_allowed_trees(tmp_path):
     # zax/ and tests/ are the only writable trees
     assert selfupdate._safe_source_path(root, "zax/sample.py").name == "sample.py"
     assert selfupdate._safe_source_path(root, "tests/test_sample.py").name == "test_sample.py"
+
+
+def test_list_source_root_does_not_crash(tmp_path):
+    """Regression: list_source('.') / '' used to hit IndexError on Path('.').parts."""
+    root = _make_repo(tmp_path)
+    for p in (".", "", "/", "./"):
+        out = selfupdate._list_source(root, p)
+        assert "zax/" in out and "tests/" in out  # shows the editable trees, no crash

@@ -72,8 +72,12 @@ ALLOW_EXTERNAL_AGENTS = os.environ.get("ZAX_ALLOW_EXTERNAL_AGENTS", "1") == "1"
 # (b) the Founder explicitly approves via the same Approve/Deny gate as shell/code —
 # nothing merges into main or restarts the live app without both.
 ALLOW_SELF_UPDATE = os.environ.get("ZAX_ALLOW_SELF_UPDATE", "1") == "1"
-SELF_UPDATE_MAX_STEPS = int(os.environ.get("ZAX_SELF_UPDATE_MAX_STEPS", "14"))
+SELF_UPDATE_MAX_STEPS = int(os.environ.get("ZAX_SELF_UPDATE_MAX_STEPS", "14"))  # tool-calls per edit
 SELF_UPDATE_TEST_TIMEOUT = int(os.environ.get("ZAX_SELF_UPDATE_TEST_TIMEOUT", "180"))
+# A big "vision" goal is decomposed into up to this many concrete steps, each edited +
+# test-gated in sequence on one branch; a step that can't pass tests is reverted and skipped.
+SELF_UPDATE_MAX_PLAN_STEPS = int(os.environ.get("ZAX_SELF_UPDATE_MAX_PLAN_STEPS", "6"))
+SELF_UPDATE_FIX_ATTEMPTS = int(os.environ.get("ZAX_SELF_UPDATE_FIX_ATTEMPTS", "2"))
 # Shell is ON, but a command approval gate (tools.py) holds anything not on a tight
 # read-only allowlist for the Founder to Approve/Deny — so `ls` runs but `rm -rf`
 # waits. Set ZAX_ALLOW_SHELL=0 to disable shell entirely.
