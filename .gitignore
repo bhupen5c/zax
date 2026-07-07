@@ -14,3 +14,4 @@ vendor/graphify/uv.lock
 vendor/graphify/CHANGELOG.md
 zax-stdout.log
 zax-stderr.log
+.DS_Store
