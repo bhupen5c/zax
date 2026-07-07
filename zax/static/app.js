@@ -1347,6 +1347,43 @@ function initCorePicker() {
   });
 }
 
+// ---------------- self-update picker (propose a change to Zax's own code)
+
+function initSelfUpdatePicker() {
+  const btn = $("#selfupdate-btn"), menu = $("#selfupdate-menu"),
+        goal = $("#selfupdate-goal"), submit = $("#selfupdate-submit");
+  if (!btn) return;
+  btn.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    menu.classList.toggle("hidden");
+    if (!menu.classList.contains("hidden")) goal.focus();
+  });
+  menu.addEventListener("click", (ev) => ev.stopPropagation());
+  submit.addEventListener("click", async () => {
+    const text = goal.value.trim();
+    if (!text) { goal.focus(); return; }
+    submit.disabled = true;
+    submit.textContent = "Writing…";
+    try {
+      const r = await api.post("/self-update", { goal: text });
+      addMsg("zax", `✓ On it — writing the change for “${text}” in an isolated branch now. ` +
+                    `If it passes the full test suite I'll bring it to you for approval in the bar above, ` +
+                    `Founder — nothing merges or restarts without your click.`);
+      goal.value = "";
+      menu.classList.add("hidden");
+    } catch (e) {
+      addMsg("zax", `Couldn't start the self-update: ${e.message || e}`);
+    }
+    submit.disabled = false;
+    submit.textContent = "Propose & test";
+  });
+  document.addEventListener("click", (ev) => {
+    if (!menu.classList.contains("hidden") && !menu.contains(ev.target) && ev.target !== btn) {
+      menu.classList.add("hidden");
+    }
+  });
+}
+
 async function boot() {
   $("#boot").classList.add("fade");
   setTimeout(() => $("#boot").remove(), 1000);
@@ -1355,6 +1392,7 @@ async function boot() {
   const status = await api.get("/status");
   updateProviderBadge(status);
   initCorePicker();
+  initSelfUpdatePicker();
   renderApprovals();
   $("#org-founder").textContent = status.founder.toUpperCase();
 

@@ -1,4 +1,5 @@
 """HTTP API — thin glue over ceo/db/voice. The UI in static/ is the only client."""
+import asyncio
 import time
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -158,6 +159,22 @@ async def start_project(body: ProjectIn):
         return {"ok": True, "single_task": t["id"], "note": "goal was a single task, not a project"}
     pipeline.kick("project planned")
     return {"ok": True, "project_id": proj["id"], "steps": len(db.project_tasks(proj["id"]))}
+
+
+class SelfUpdateIn(BaseModel):
+    goal: str = Field(min_length=3, max_length=2000)
+
+
+@router.post("/self-update")
+async def trigger_self_update(body: SelfUpdateIn):
+    """Kick off a self-update from the Bridge button. Fires in the background (propose
+    + full test suite takes ~30-90s) and reports via events/approvals, same as the chat
+    action — this endpoint just returns immediately so the button doesn't hang."""
+    if not config.ALLOW_SELF_UPDATE:
+        raise HTTPException(400, "Self-update is disabled (ZAX_ALLOW_SELF_UPDATE=0)")
+    asyncio.create_task(ceo._self_update_bg(body.goal))
+    db.log_event("selfupdate", "founder", f"The Founder requested a self-update: {body.goal[:100]}")
+    return {"ok": True, "note": "Writing the change now — it'll land in the approval bar if it passes tests."}
 
 
 class CoreSetIn(BaseModel):
