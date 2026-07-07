@@ -39,6 +39,9 @@ Available tools:
   list_files   {"path": str}           -> list files in your workspace
   run_code     {"code": str}           -> execute Python (isolated process, stdout/errors returned)
   shell        {"command": str}        -> run a shell command in the workspace
+  delegate     {"agent": "hermes"|"opencode", "prompt": str} -> hand a whole task to
+                                          another agent app on this machine and use its result
+                                          (hermes = general autonomous agent; opencode = coding agent)
   remember     {"note": str}           -> store a fact in company memory
 
 HOW TO WORK (this is what separates you from a chatbot):
@@ -294,6 +297,60 @@ async def run_approved(tool: str, command: str) -> str:
     return f"Unknown tool: {tool}"
 
 
+# --- External agent delegation (drive Hermes / opencode) ------------------------
+# Each entry: (executable, argv-builder). The tool hands a whole task to another
+# agent app on this machine and returns its result.
+_EXTERNAL_AGENTS = {
+    "hermes":   ("hermes",   lambda p: ["-z", p, "--yolo", "--cli"]),
+    "opencode": ("opencode", lambda p: ["run", p]),
+}
+# The launchd service's PATH is minimal; probe the usual install dirs too.
+_AGENT_PATHS = [os.path.expanduser("~/.local/bin"), os.path.expanduser("~/.opencode/bin"),
+                os.path.expanduser("~/.npm-global/bin"), "/opt/homebrew/bin", "/usr/local/bin"]
+
+
+def _resolve_exe(name: str) -> str:
+    from shutil import which
+    hit = which(name)
+    if hit:
+        return hit
+    for d in _AGENT_PATHS:
+        cand = os.path.join(d, name)
+        if os.path.exists(cand):
+            return cand
+    return ""
+
+
+async def delegate_agent(which_agent: str, prompt: str) -> str:
+    """Run a whole task through another agent app (hermes | opencode) and return its
+    output — lets Zax orchestrate the agents you already use to control your projects."""
+    if not config.ALLOW_EXTERNAL_AGENTS:
+        return "External agents are disabled (set ZAX_ALLOW_EXTERNAL_AGENTS=1)."
+    spec = _EXTERNAL_AGENTS.get(which_agent.strip().lower())
+    if not spec:
+        return f"Unknown agent '{which_agent}'. Available: {', '.join(_EXTERNAL_AGENTS)}."
+    base, argf = spec
+    exe = _resolve_exe(base)
+    if not exe:
+        return f"{which_agent} is not installed on this machine."
+    if not prompt.strip():
+        return "No prompt given to delegate."
+    env = {**os.environ, "PATH": os.environ.get("PATH", "") + os.pathsep + os.pathsep.join(_AGENT_PATHS)}
+    proc = await asyncio.create_subprocess_exec(
+        exe, *argf(prompt), stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, env=env)
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=420)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return f"{which_agent} timed out after 420s."
+    text = _ANSI.sub("", out.decode(errors="replace")).strip()
+    return text[:6000] or f"{which_agent} returned no output."
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
 async def run(name: str, args: dict, agent_name: str = "agent",
               task_id: str = "", task_title: str = "") -> str:
     try:
@@ -319,6 +376,12 @@ async def run(name: str, args: dict, agent_name: str = "agent",
             if gated:
                 return _hold_for_approval("shell", command, why, agent_name, task_id, task_title)
             return await shell(command)
+        if name == "delegate":
+            which_agent = str(args.get("agent", "hermes"))
+            prompt = str(args.get("prompt", ""))
+            db.log_event("delegate", agent_name,
+                         f"{agent_name} delegated to {which_agent}: {prompt[:100]}")
+            return await delegate_agent(which_agent, prompt)
         if name == "remember":
             db.remember(str(args.get("note", ""))[:1000], kind="note", agent=agent_name)
             return "Stored in company memory."
